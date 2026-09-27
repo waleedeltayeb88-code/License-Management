@@ -1,0 +1,7 @@
+{
+  "name": "سعودي سوبر ماركت - إدارة رخص أسطول التوصيل",
+  "description": "المنظومة الاحترافية لإدارة ومتابعة رخص أسطول سيارات توصيل وفروع سعودي سوبر ماركت في مصر (رخص التسيير وتصاريح الإعلانات)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
