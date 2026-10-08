@@ -66,13 +66,7 @@ import {
 
 function mergeAndSanitizeUsers(list: SystemUser[]): SystemUser[] {
   const map = new Map<string, SystemUser>();
-  // Ensure default 4 role accounts exist so user can always test every role
-  for (const defUser of INITIAL_USERS) {
-    map.set(defUser.username.toLowerCase(), {
-      ...defUser,
-      permissions: sanitizeUserPermissions(defUser.role, defUser.permissions),
-    });
-  }
+
   for (const u of list) {
     if (!u || !u.username) continue;
     const key = u.username.toLowerCase();
@@ -94,6 +88,16 @@ function mergeAndSanitizeUsers(list: SystemUser[]): SystemUser[] {
     }
     map.set(key, sanitized);
   }
+
+  // Always guarantee that the master admin account exists so the owner is never locked out
+  if (!map.has('admin')) {
+    const adminDef = INITIAL_USERS[0];
+    map.set('admin', {
+      ...adminDef,
+      permissions: sanitizeUserPermissions('admin', adminDef.permissions),
+    });
+  }
+
   return Array.from(map.values());
 }
 

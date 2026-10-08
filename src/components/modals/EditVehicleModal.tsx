@@ -46,6 +46,7 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
   const [vehicleSearchQuery, setVehicleSearchQuery] = useState<string>('');
   const [selectedId, setSelectedId] = useState<string>('');
   const [formData, setFormData] = useState<Vehicle | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
 
   // Initialize selected vehicle
   useEffect(() => {
@@ -441,19 +442,38 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
               <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/10">
                 <div>
                   {canDelete && onDelete && formData && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm(`هل أنت متأكد من حذف السيارة رقم (${formData.plateLetters || ''} ${formData.vehicleNumber}) نهائياً من قاعدة البيانات؟`)) {
-                          onDelete(formData.id);
-                          onClose();
-                        }
-                      }}
-                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-rose-300 bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/35 transition-all cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>حذف السيارة نهائياً</span>
-                    </button>
+                    !confirmDelete ? (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(true)}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-rose-300 bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/35 transition-all cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>حذف السيارة نهائياً</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2 bg-rose-950/60 border border-rose-500/50 px-3 py-1.5 rounded-xl">
+                        <span className="text-[11px] font-bold text-rose-200">تأكيد الحذف النهائي؟</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDelete(formData.id);
+                            setConfirmDelete(false);
+                            onClose();
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black cursor-pointer"
+                        >
+                          نعم، احذف
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete(false)}
+                          className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          إلغاء
+                        </button>
+                      </div>
+                    )
                   )}
                 </div>
                 <div className="flex items-center gap-3">
