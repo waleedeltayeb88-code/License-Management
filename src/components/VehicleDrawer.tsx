@@ -12,7 +12,8 @@ import {
   QrCode, 
   ShieldCheck, 
   ArrowRight,
-  ArrowLeft
+  ArrowLeft,
+  ArrowLeftRight
 } from 'lucide-react';
 import { Vehicle, TransferRecord, AuditRecord } from '../types';
 import { EgyptianTransportPlate } from './common/EgyptianTransportPlate';
@@ -25,6 +26,7 @@ interface VehicleDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onManageData?: (vehicle: Vehicle) => void;
+  onTransferVehicle?: (vehicle: Vehicle) => void;
   transferRecords: TransferRecord[];
   auditRecords: AuditRecord[];
   thresholdDays: number;
@@ -37,6 +39,7 @@ export const VehicleDrawer: React.FC<VehicleDrawerProps> = ({
   isOpen,
   onClose,
   onManageData,
+  onTransferVehicle,
   transferRecords = [],
   auditRecords = [],
   thresholdDays,
@@ -114,22 +117,38 @@ export const VehicleDrawer: React.FC<VehicleDrawerProps> = ({
         </div>
 
         {/* Action Button: إدارة البيانات */}
-        <div className="p-4 bg-slate-900/40 border-b border-white/5 flex items-center justify-between">
-          {onManageData ? (
+        <div className="p-4 bg-slate-900/40 border-b border-white/5 flex flex-wrap items-center justify-between gap-2">
+          {onManageData || onTransferVehicle ? (
             <>
               <span className="text-xs text-slate-400">
-                {lang === 'ar' ? 'لتعديل البيانات أو تجديد الرخص أو نقل الفرع:' : 'To edit data, renew licenses, or transfer branch:'}
+                {lang === 'ar' ? 'إجراءات سريعة على المركبة والرخص والفرع:' : 'Quick vehicle & license actions:'}
               </span>
-              <button
-                onClick={() => {
-                  onClose();
-                  onManageData(vehicle);
-                }}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white text-xs font-bold shadow-lg shadow-blue-950 transition-all active:scale-[0.98] cursor-pointer"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>{lang === 'ar' ? 'إدارة البيانات الموحدة' : 'Unified Data Management'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {onManageData && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onManageData(vehicle);
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white text-xs font-bold shadow-lg shadow-emerald-950 transition-all active:scale-[0.98] cursor-pointer"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>{lang === 'ar' ? 'تعديل الرخص والبيانات' : 'Edit Licenses'}</span>
+                  </button>
+                )}
+                {onTransferVehicle && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onTransferVehicle(vehicle);
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all active:scale-[0.98] cursor-pointer"
+                  >
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                    <span>{lang === 'ar' ? 'نقل لفرع آخر' : 'Transfer Branch'}</span>
+                  </button>
+                )}
+              </div>
             </>
           ) : (
             <div className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-800/70 border border-slate-600/30 text-xs text-slate-300 font-bold">

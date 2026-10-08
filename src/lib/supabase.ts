@@ -386,21 +386,34 @@ export async function saveUserToSupabase(user: SystemUser): Promise<boolean> {
 
 export async function saveAllUsersToSupabase(users: SystemUser[]): Promise<boolean> {
   try {
-    const rows = users.map(userToSupabaseRow);
-    const { error } = await supabase.from('system_users').upsert(rows, { onConflict: 'id' });
-    if (error) {
-      console.error('saveAllUsersToSupabase error:', error);
-      return false;
-    }
-
-    // Also remove any deleted users in Supabase that are not in the updated list
-    const { data: existing } = await supabase.from('system_users').select('id');
+    // 1. First remove any deleted users in Supabase that are not in the updated list
+    // Doing this BEFORE upsert avoids unique email constraint collisions if an email is reused
+    const { data: existing } = await supabase.from('system_users').select('id, email');
     if (existing && existing.length > 0) {
       const currentIds = new Set(users.map(u => u.id));
       const toDelete = existing.filter((r: any) => !currentIds.has(r.id)).map((r: any) => r.id);
       if (toDelete.length > 0) {
         await supabase.from('system_users').delete().in('id', toDelete);
       }
+    }
+
+    // 2. Ensure unique emails across all rows to satisfy system_users_email_key constraint
+    const usedEmails = new Set<string>();
+    const rows = users.map((u, idx) => {
+      const row = userToSupabaseRow(u);
+      let emailLower = row.email.toLowerCase().trim();
+      if (usedEmails.has(emailLower)) {
+        row.email = `${u.username.toLowerCase()}.${idx}@seoudisupermarket.com`;
+        emailLower = row.email.toLowerCase();
+      }
+      usedEmails.add(emailLower);
+      return row;
+    });
+
+    const { error } = await supabase.from('system_users').upsert(rows, { onConflict: 'id' });
+    if (error) {
+      console.error('saveAllUsersToSupabase error:', error);
+      return false;
     }
 
     return true;
@@ -616,22 +629,67 @@ export async function saveSettingsToSupabase(
   }
 }
 
-export async function seedBranchesToSupabase(branches: string[]): Promise<boolean> {
+export async function fetchBranchesFromSupabase(): Promise<string[] | null> {
   try {
-    const rows = branches.map((name, idx) => ({
-      id: `branch-${idx + 1}`,
+    const { data, error } = await supabase
+      .from('branches')
+      .select('name, created_at')
+      .order('created_at', { ascending: true });
+
+    if (error || !data) return null;
+    if (data.length === 0) return [];
+
+    const names = data.map((r: any) => String(r.name || '').trim()).filter(Boolean);
+    return Array.from(new Set(names));
+  } catch (err) {
+    console.error('fetchBranchesFromSupabase error:', err);
+    return null;
+  }
+}
+
+export async function saveBranchesToSupabase(branches: string[]): Promise<boolean> {
+  try {
+    const cleanBranches = Array.from(new Set(branches.map(b => b.trim()).filter(Boolean)));
+    const { data: existing } = await supabase.from('branches').select('id, name');
+
+    if (existing && existing.length > 0) {
+      const targetSet = new Set(cleanBranches);
+      const toDelete = existing.filter((r: any) => !targetSet.has(r.name)).map((r: any) => r.id);
+      if (toDelete.length > 0) {
+        await supabase.from('branches').delete().in('id', toDelete);
+      }
+    }
+
+    const existingMap = new Map<string, string>();
+    if (existing) {
+      existing.forEach((r: any) => existingMap.set(r.name, r.id));
+    }
+
+    const rows = cleanBranches.map((name, idx) => ({
+      id: existingMap.get(name) || `branch-${idx + 1}-${Date.now().toString().slice(-4)}`,
       name,
       code: `BR-${String(idx + 1).padStart(2, '0')}`,
       city: name.includes('العلمين') ? 'الساحل الشمالي' : 'القاهرة الكبرى',
       manager_name: 'إدارة تشغيل سعودي سوبر ماركت',
       phone: '01144542800'
     }));
-    const { error } = await supabase.from('branches').upsert(rows, { onConflict: 'id' });
-    return !error;
+
+    if (rows.length > 0) {
+      const { error } = await supabase.from('branches').upsert(rows, { onConflict: 'id' });
+      if (error) {
+        console.error('saveBranchesToSupabase error:', error);
+        return false;
+      }
+    }
+    return true;
   } catch (err) {
-    console.error('seedBranchesToSupabase error:', err);
+    console.error('saveBranchesToSupabase exception:', err);
     return false;
   }
+}
+
+export async function seedBranchesToSupabase(branches: string[]): Promise<boolean> {
+  return saveBranchesToSupabase(branches);
 }
 
 // ============================================================================

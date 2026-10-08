@@ -35,6 +35,7 @@ interface SupabaseModalProps {
   users?: SystemUser[];
   transfers?: TransferRecord[];
   auditLogs?: AuditRecord[];
+  branches?: string[];
   settings?: AppSettings;
   referenceDate?: string;
   onRefreshVehicles?: () => void;
@@ -47,6 +48,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
   users = [],
   transfers = [],
   auditLogs = [],
+  branches = BRANCHES,
   settings = INITIAL_SETTINGS,
   referenceDate = DEFAULT_REPORT_DATE,
   onRefreshVehicles
@@ -85,7 +87,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
       users,
       transfers,
       auditLogs,
-      branches: BRANCHES,
+      branches,
       settings,
       referenceDate
     });

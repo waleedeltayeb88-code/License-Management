@@ -20,6 +20,7 @@ interface AddVehicleModalProps {
   onClose: () => void;
   branches: string[];
   onAdd: (newVehicle: Omit<Vehicle, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onAddBranch?: (branchName: string) => void;
   lang: Language;
 }
 
@@ -28,50 +29,76 @@ export const AddVehicleModal: React.FC<AddVehicleModalProps> = ({
   onClose,
   branches = [],
   onAdd,
+  onAddBranch,
 }) => {
   // Step 1: Branch selection first
-  const [branch, setBranch] = useState(branches[0] || 'هايد بارك (التجمع الخامس)');
+  const [branch, setBranch] = useState(branches[0] || 'هايد بارك (Hyde Park)');
+  const [showNewBranchInput, setShowNewBranchInput] = useState(false);
+  const [newBranchName, setNewBranchName] = useState('');
 
   // Step 2: Vehicle details
   const [vehicleNumber, setVehicleNumber] = useState('');
   const [plateLetters, setPlateLetters] = useState('أ ب ج');
-  const [model, setModel] = useState('سوزوكي سوبر كاري');
+  const [model, setModel] = useState('سوزوكي سوبر كاري (2025)');
 
   // Step 3: Traffic License (Egypt Traffic Department)
   const [tLicenseNum, setTLicenseNum] = useState('');
-  const [tIssueDate, setTIssueDate] = useState('2024-06-01');
-  const [tExpiryDate, setTExpiryDate] = useState('2025-06-01');
+  const [tIssueDate, setTIssueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [tExpiryDate, setTExpiryDate] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toISOString().slice(0, 10);
+  });
 
   // Step 4: Commercial License (Egypt Municipalities/Districts Ad Permit)
   const [cLicenseNum, setCLicenseNum] = useState('');
-  const [cIssueDate, setCIssueDate] = useState('2024-06-01');
-  const [cExpiryDate, setCExpiryDate] = useState('2025-06-01');
+  const [cIssueDate, setCIssueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [cExpiryDate, setCExpiryDate] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toISOString().slice(0, 10);
+  });
 
   const [notes, setNotes] = useState('');
 
   if (!isOpen) return null;
 
+  const handleCreateNewBranch = () => {
+    const clean = newBranchName.trim();
+    if (!clean) return;
+    if (onAddBranch) {
+      onAddBranch(clean);
+    }
+    setBranch(clean);
+    setNewBranchName('');
+    setShowNewBranchInput(false);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!vehicleNumber) return;
+    if (!vehicleNumber.trim()) return;
 
     onAdd({
-      vehicleNumber,
-      plateLetters,
+      vehicleNumber: vehicleNumber.trim(),
+      plateLetters: plateLetters.trim() || 'أ ب ج',
       model,
       branch,
       trafficLicense: {
-        licenseNumber: tLicenseNum || `مرور مصر - ${Math.floor(100000 + Math.random() * 900000)}`,
+        licenseNumber: tLicenseNum.trim() || `مرور مصر - ${Math.floor(100000 + Math.random() * 900000)}`,
         issueDate: tIssueDate,
         expiryDate: tExpiryDate,
       },
       commercialLicense: {
-        licenseNumber: cLicenseNum || `إعلان حي - ${Math.floor(10000 + Math.random() * 90000)}`,
+        licenseNumber: cLicenseNum.trim() || `إعلان حي - ${Math.floor(10000 + Math.random() * 90000)}`,
         issueDate: cIssueDate,
         expiryDate: cExpiryDate,
       },
-      notes,
+      notes: notes.trim(),
     });
+    setVehicleNumber('');
+    setTLicenseNum('');
+    setCLicenseNum('');
+    setNotes('');
     onClose();
   };
 
@@ -110,20 +137,45 @@ export const AddVehicleModal: React.FC<AddVehicleModalProps> = ({
                 <Store className="w-4 h-4 text-emerald-400" />
                 <span>الخطوة الأولى: تحديد فرع سعودي سوبر ماركت التابع له السيارة</span>
               </label>
-              <span className="text-[11px] text-slate-400">سعودي • القاهرة الكبرى</span>
+              <button
+                type="button"
+                onClick={() => setShowNewBranchInput(prev => !prev)}
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer"
+              >
+                {showNewBranchInput ? 'إلغاء' : '+ إضافة فرع جديد'}
+              </button>
             </div>
 
-            <select
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-              className="w-full bg-[#070b15] border border-emerald-500/40 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-            >
-              {branches.map((b) => (
-                <option key={b} value={b} className="bg-[#090e1a]">
-                  {b}
-                </option>
-              ))}
-            </select>
+            {showNewBranchInput ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  placeholder="اكتب اسم الفرع الجديد (مثال: فرع المعادي الجديدة)..."
+                  className="w-full bg-[#070b15] border border-emerald-500/60 rounded-xl px-3.5 py-2 text-xs text-white"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateNewBranch}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shrink-0 cursor-pointer"
+                >
+                  حفظ الفرع
+                </button>
+              </div>
+            ) : (
+              <select
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                className="w-full bg-[#070b15] border border-emerald-500/40 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+              >
+                {Array.from(new Set([...branches, branch].filter(Boolean))).map((b) => (
+                  <option key={b} value={b} className="bg-[#090e1a]">
+                    {b}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* STEP 2: VEHICLE & LICENSE PLATE DETAILS */}

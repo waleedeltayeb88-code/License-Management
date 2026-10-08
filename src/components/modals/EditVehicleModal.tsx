@@ -27,6 +27,7 @@ interface EditVehicleModalProps {
   initialVehicleId?: string;
   onSave: (updatedVehicle: Vehicle) => void;
   onDelete?: (vehicleId: string) => void;
+  onAddBranch?: (branchName: string) => void;
   canDelete?: boolean;
   lang: Language;
 }
@@ -39,6 +40,7 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
   initialVehicleId,
   onSave,
   onDelete,
+  onAddBranch,
   canDelete = false,
 }) => {
   // Step 1: Branch Filter & Search
@@ -47,19 +49,33 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
   const [selectedId, setSelectedId] = useState<string>('');
   const [formData, setFormData] = useState<Vehicle | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
+  const [showNewBranchInput, setShowNewBranchInput] = useState<boolean>(false);
+  const [newBranchName, setNewBranchName] = useState<string>('');
 
-  // Initialize selected vehicle
+  // Initialize selected vehicle whenever modal opens or initialVehicleId changes
   useEffect(() => {
+    if (!isOpen) return;
+    setVehicleSearchQuery('');
+    setConfirmDelete(false);
+    setShowNewBranchInput(false);
+    setNewBranchName('');
+
     if (initialVehicleId && vehicles.some(v => v.id === initialVehicleId)) {
       const found = vehicles.find(v => v.id === initialVehicleId);
       if (found) {
-        setSelectedBranchFilter(found.branch);
+        setSelectedBranchFilter('all');
         setSelectedId(found.id);
+        setFormData(JSON.parse(JSON.stringify(found)));
+        return;
       }
-    } else if (vehicles.length > 0 && !selectedId) {
-      setSelectedId(vehicles[0].id);
     }
-  }, [initialVehicleId, vehicles]);
+    if (vehicles.length > 0) {
+      const first = vehicles[0];
+      setSelectedBranchFilter('all');
+      setSelectedId(first.id);
+      setFormData(JSON.parse(JSON.stringify(first)));
+    }
+  }, [isOpen, initialVehicleId]);
 
   // Filter vehicles based on branch selector and search query
   const filteredVehicles = useMemo(() => {
@@ -80,23 +96,74 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
 
   // Update selectedId if current selection is not in filtered list
   useEffect(() => {
+    if (!isOpen) return;
     if (filteredVehicles.length > 0) {
       if (!filteredVehicles.some(v => v.id === selectedId)) {
-        setSelectedId(filteredVehicles[0].id);
+        const nextV = filteredVehicles[0];
+        setSelectedId(nextV.id);
+        setFormData(JSON.parse(JSON.stringify(nextV)));
       }
     } else {
       setSelectedId('');
       setFormData(null);
     }
-  }, [filteredVehicles, selectedId]);
+  }, [filteredVehicles, selectedId, isOpen]);
 
-  // Sync formData with selected vehicle
-  useEffect(() => {
-    const current = vehicles.find(v => v.id === selectedId);
+  // Sync formData when user explicitly changes selectedId
+  const handleSelectVehicleChange = (newId: string) => {
+    setSelectedId(newId);
+    setConfirmDelete(false);
+    const current = vehicles.find(v => v.id === newId);
     if (current) {
       setFormData(JSON.parse(JSON.stringify(current)));
     }
-  }, [selectedId, vehicles]);
+  };
+
+  // Quick date helpers for instant license renewal (+1 Year / +6 Months)
+  const handleQuickRenewTraffic = (monthsToAdd: number) => {
+    if (!formData) return;
+    const today = new Date();
+    const issueStr = today.toISOString().slice(0, 10);
+    const exp = new Date(today);
+    exp.setMonth(exp.getMonth() + monthsToAdd);
+    const expStr = exp.toISOString().slice(0, 10);
+    setFormData({
+      ...formData,
+      trafficLicense: {
+        ...formData.trafficLicense,
+        issueDate: issueStr,
+        expiryDate: expStr,
+      }
+    });
+  };
+
+  const handleQuickRenewCommercial = (monthsToAdd: number) => {
+    if (!formData) return;
+    const today = new Date();
+    const issueStr = today.toISOString().slice(0, 10);
+    const exp = new Date(today);
+    exp.setMonth(exp.getMonth() + monthsToAdd);
+    const expStr = exp.toISOString().slice(0, 10);
+    setFormData({
+      ...formData,
+      commercialLicense: {
+        ...formData.commercialLicense,
+        issueDate: issueStr,
+        expiryDate: expStr,
+      }
+    });
+  };
+
+  const handleCreateNewBranch = () => {
+    const clean = newBranchName.trim();
+    if (!clean || !formData) return;
+    if (onAddBranch) {
+      onAddBranch(clean);
+    }
+    setFormData({ ...formData, branch: clean });
+    setNewBranchName('');
+    setShowNewBranchInput(false);
+  };
 
   if (!isOpen) return null;
 
@@ -203,7 +270,7 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
             ) : (
               <select
                 value={selectedId}
-                onChange={(e) => setSelectedId(e.target.value)}
+                onChange={(e) => handleSelectVehicleChange(e.target.value)}
                 className="w-full bg-[#070b15] border border-amber-500/40 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-amber-500/50"
                 required
               >
@@ -251,27 +318,70 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-300 font-medium mb-1">الفرع المخصص</label>
-                  <select
-                    value={formData.branch}
-                    onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
-                    className="w-full bg-[#0d1424] border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-semibold"
-                  >
-                    {branches.map((b) => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs text-slate-300 font-medium">الفرع المخصص</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewBranchInput(prev => !prev)}
+                      className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer"
+                    >
+                      {showNewBranchInput ? 'إلغاء' : '+ فرع جديد'}
+                    </button>
+                  </div>
+                  {showNewBranchInput ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={newBranchName}
+                        onChange={(e) => setNewBranchName(e.target.value)}
+                        placeholder="اسم الفرع الجديد..."
+                        className="w-full bg-[#0d1424] border border-emerald-500/50 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCreateNewBranch}
+                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold shrink-0 cursor-pointer"
+                      >
+                        إضافة
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={formData.branch}
+                      onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
+                      className="w-full bg-[#0d1424] border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-semibold"
+                    >
+                      {Array.from(new Set([...branches, formData.branch].filter(Boolean))).map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
 
               {/* Traffic License Section */}
               <div className="p-3.5 rounded-xl bg-[#0b1120] border border-cyan-500/25 space-y-3">
-                <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2 text-xs font-bold text-cyan-400">
                     <Car className="w-4 h-4" />
                     <span>رخصة تسيير المركبة (إدارة المرور - مصر)</span>
                   </div>
-                  <span className="text-[10px] text-slate-400">الفحص الفني والتسيير</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRenewTraffic(12)}
+                      className="px-2 py-0.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold transition-colors cursor-pointer"
+                    >
+                      ⚡ تجديد سنة (+1 عام)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRenewTraffic(6)}
+                      className="px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[10px] font-semibold transition-colors cursor-pointer"
+                    >
+                      +6 أشهر
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
@@ -347,12 +457,27 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
 
               {/* Commercial Ad Permit Section */}
               <div className="p-3.5 rounded-xl bg-[#0b1120] border border-amber-500/25 space-y-3">
-                <div className="flex items-center justify-between pb-1 border-b border-white/[0.06]">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-1.5 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
                     <Megaphone className="w-4 h-4" />
                     <span>تصريح إعلانات سعودي سوبر ماركت (المحليات والأحياء)</span>
                   </div>
-                  <span className="text-[10px] text-slate-400">ملصقات الصندوق التجاري</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRenewCommercial(12)}
+                      className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-[10px] font-bold transition-colors cursor-pointer"
+                    >
+                      ⚡ تجديد سنة (+1 عام)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRenewCommercial(6)}
+                      className="px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[10px] font-semibold transition-colors cursor-pointer"
+                    >
+                      +6 أشهر
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>

@@ -24,6 +24,7 @@ interface TransferVehicleModalProps {
   branches: string[];
   initialVehicleId?: string;
   onTransfer: (vehicleId: string, fromBranch: string, toBranch: string, reason: string, notes: string, date: string) => void;
+  onAddBranch?: (branchName: string) => void;
   lang: Language;
   canTransfer?: boolean;
 }
@@ -35,6 +36,7 @@ export const TransferVehicleModal: React.FC<TransferVehicleModalProps> = ({
   branches = [],
   initialVehicleId,
   onTransfer,
+  onAddBranch,
   canTransfer = true,
 }) => {
   // 1. Current Branch Filter state
@@ -44,22 +46,45 @@ export const TransferVehicleModal: React.FC<TransferVehicleModalProps> = ({
 
   // Transfer Details
   const [toBranch, setToBranch] = useState<string>('');
-  const [transferDate, setTransferDate] = useState<string>(() => DEFAULT_REPORT_DATE);
+  const [transferDate, setTransferDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState<string>('تغطية زيادة طلبات التوصيل المنزلي');
   const [notes, setNotes] = useState<string>('');
+  const [showNewBranchInput, setShowNewBranchInput] = useState<boolean>(false);
+  const [newBranchName, setNewBranchName] = useState<string>('');
 
-  // Initial vehicle load
+  // Initial vehicle load when modal opens
   useEffect(() => {
+    if (!isOpen) return;
+    setVehicleSearchQuery('');
+    setNotes('');
+    setShowNewBranchInput(false);
+    setNewBranchName('');
+    setTransferDate(new Date().toISOString().slice(0, 10));
+
     if (initialVehicleId && vehicles.some(v => v.id === initialVehicleId)) {
       const v = vehicles.find(item => item.id === initialVehicleId);
       if (v) {
-        setSelectedSourceBranch(v.branch);
+        setSelectedSourceBranch('all');
         setSelectedVehicleId(v.id);
+        return;
       }
-    } else if (vehicles.length > 0 && !selectedVehicleId) {
+    }
+    if (vehicles.length > 0) {
+      setSelectedSourceBranch('all');
       setSelectedVehicleId(vehicles[0].id);
     }
-  }, [initialVehicleId, vehicles]);
+  }, [isOpen, initialVehicleId]);
+
+  const handleCreateNewBranch = () => {
+    const clean = newBranchName.trim();
+    if (!clean) return;
+    if (onAddBranch) {
+      onAddBranch(clean);
+    }
+    setToBranch(clean);
+    setNewBranchName('');
+    setShowNewBranchInput(false);
+  };
 
   // Filter vehicles by selected source branch and search query
   const availableVehicles = useMemo(() => {
@@ -259,23 +284,51 @@ export const TransferVehicleModal: React.FC<TransferVehicleModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] text-slate-300 font-semibold mb-1">
-                  الفرع المستهدف الجديد (سعودي سوبر ماركت)
-                </label>
-                <select
-                  value={toBranch}
-                  onChange={(e) => setToBranch(e.target.value)}
-                  className="w-full bg-[#070b15] border border-cyan-500/50 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
-                  required
-                >
-                  {branches
-                    .filter(b => !currentVehicle || b !== currentVehicle.branch)
-                    .map((b) => (
-                      <option key={b} value={b} className="bg-[#090e1a]">
-                        {b}
-                      </option>
-                    ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] text-slate-300 font-semibold">
+                    الفرع المستهدف الجديد (سعودي سوبر ماركت)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowNewBranchInput(prev => !prev)}
+                    className="text-[10px] text-cyan-400 hover:text-cyan-300 font-bold underline cursor-pointer"
+                  >
+                    {showNewBranchInput ? 'إلغاء' : '+ إضافة فرع جديد'}
+                  </button>
+                </div>
+                {showNewBranchInput ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newBranchName}
+                      onChange={(e) => setNewBranchName(e.target.value)}
+                      placeholder="اكتب اسم الفرع الجديد..."
+                      className="w-full bg-[#070b15] border border-cyan-500/60 rounded-xl px-3 py-2 text-xs text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateNewBranch}
+                      className="px-3 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shrink-0 cursor-pointer"
+                    >
+                      حفظ الفرع
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={toBranch}
+                    onChange={(e) => setToBranch(e.target.value)}
+                    className="w-full bg-[#070b15] border border-cyan-500/50 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    required
+                  >
+                    {branches
+                      .filter(b => !currentVehicle || b !== currentVehicle.branch)
+                      .map((b) => (
+                        <option key={b} value={b} className="bg-[#090e1a]">
+                          {b}
+                        </option>
+                      ))}
+                  </select>
+                )}
               </div>
 
               <div>

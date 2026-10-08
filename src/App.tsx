@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { 
   Vehicle, 
   FilterState, 
@@ -61,6 +61,8 @@ import {
   seedAuditLogsToSupabase,
   fetchSettingsFromSupabase,
   saveSettingsToSupabase,
+  fetchBranchesFromSupabase,
+  saveBranchesToSupabase,
   seedBranchesToSupabase
 } from './lib/supabase';
 
@@ -118,6 +120,20 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [cloudStatus, setCloudStatus] = useState<'connected' | 'syncing' | 'error'>('connected');
   const [cloudToast, setCloudToast] = useState<string | null>(null);
+  const pendingMutationsRef = useRef<number>(0);
+  const lastMutationTimeRef = useRef<number>(0);
+
+  const beginMutation = useCallback(() => {
+    pendingMutationsRef.current += 1;
+    lastMutationTimeRef.current = Date.now();
+    setCloudStatus('syncing');
+  }, []);
+
+  const endMutation = useCallback((ok: boolean) => {
+    pendingMutationsRef.current = Math.max(0, pendingMutationsRef.current - 1);
+    lastMutationTimeRef.current = Date.now();
+    setCloudStatus(ok ? 'connected' : 'error');
+  }, []);
 
   const showCloudNotification = useCallback((msg: string) => {
     setCloudToast(msg);
@@ -255,13 +271,31 @@ export default function App() {
     }
 
     // Save to Supabase Cloud
-    setCloudStatus('syncing');
+    beginMutation();
     const ok = await saveAllUsersToSupabase(sanitizedList);
-    setCloudStatus(ok ? 'connected' : 'error');
+    endMutation(ok);
     if (ok) {
       showCloudNotification('تم حفظ وتحديث قائمة المستخدمين والصلاحيات في سحابة Supabase ✓');
     }
   };
+
+  // Dynamic Branches State (persisted locally + synced with Supabase public.branches)
+  const [branches, setBranches] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem('seoudi_fleet_branches_v4');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return BRANCHES;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('seoudi_fleet_branches_v4', JSON.stringify(branches));
+    } catch {}
+  }, [branches]);
 
   // Primary Data State (with local cache fallback for instant multi-device responsiveness)
   const [vehicles, setVehicles] = useState<Vehicle[]>(() => {
@@ -323,17 +357,46 @@ export default function App() {
   const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
   const [activeVehicle, setActiveVehicle] = useState<Vehicle | null>(null);
 
-  // Load all data from Supabase on mount + auto-seed empty tables + subscribe to Realtime changes
-  const loadAllFromSupabase = useCallback(async () => {
+  // Ensure effectiveBranches always includes all branches + any branch assigned to a vehicle
+  const effectiveBranches = useMemo(() => {
+    const set = new Set<string>(branches);
+    (vehicles || []).forEach(v => {
+      if (v.branch && v.branch.trim()) {
+        set.add(v.branch.trim());
+      }
+    });
+    return Array.from(set);
+  }, [branches, vehicles]);
+
+  // Keep activeVehicle live-synced with latest vehicle state
+  const liveActiveVehicle = useMemo(() => {
+    if (!activeVehicle) return null;
+    return vehicles.find(v => v.id === activeVehicle.id) || activeVehicle;
+  }, [vehicles, activeVehicle]);
+
+  // Load all data from Supabase on mount + auto-seed empty tables
+  const loadAllFromSupabase = useCallback(async (isManual: boolean = false) => {
+    // Do not overwrite local state with background poll if a mutation is in flight or just finished
+    if (!isManual && (pendingMutationsRef.current > 0 || Date.now() - lastMutationTimeRef.current < 6000)) {
+      return;
+    }
+
     setCloudStatus('syncing');
     try {
-      const [cloudVehicles, cloudUsers, cloudTransfers, cloudAudits, cloudSettings] = await Promise.all([
+      const [cloudVehicles, cloudUsers, cloudTransfers, cloudAudits, cloudSettings, cloudBranches] = await Promise.all([
         fetchVehiclesFromSupabase(),
         fetchUsersFromSupabase(),
         fetchTransfersFromSupabase(),
         fetchAuditLogsFromSupabase(),
-        fetchSettingsFromSupabase()
+        fetchSettingsFromSupabase(),
+        fetchBranchesFromSupabase()
       ]);
+
+      // Re-check mutation guard after network await
+      if (!isManual && (pendingMutationsRef.current > 0 || Date.now() - lastMutationTimeRef.current < 6000)) {
+        setCloudStatus('connected');
+        return;
+      }
 
       if (cloudVehicles !== null) {
         if (cloudVehicles.length > 0) {
@@ -344,6 +407,14 @@ export default function App() {
             seedVehiclesToSupabase(initialVehicles),
             seedBranchesToSupabase(BRANCHES)
           ]);
+        }
+      }
+
+      if (cloudBranches !== null) {
+        if (cloudBranches.length > 0) {
+          setBranches(cloudBranches);
+        } else {
+          await seedBranchesToSupabase(BRANCHES);
         }
       }
 
@@ -400,26 +471,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loadAllFromSupabase();
+    loadAllFromSupabase(true);
 
-    // Auto-sync when switching back to the tab/app on any device + periodic background HTTP sync
-    const handleFocusSync = () => {
-      if (document.visibilityState === 'visible') {
-        loadAllFromSupabase();
-      }
-    };
-    window.addEventListener('focus', handleFocusSync);
-    document.addEventListener('visibilitychange', handleFocusSync);
-
+    // Periodic background HTTP sync (only when no modal is open and no mutation is running)
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
-        loadAllFromSupabase();
+        loadAllFromSupabase(false);
       }
-    }, 30000);
+    }, 45000);
 
     return () => {
-      window.removeEventListener('focus', handleFocusSync);
-      document.removeEventListener('visibilitychange', handleFocusSync);
       window.clearInterval(intervalId);
     };
   }, [loadAllFromSupabase]);
@@ -555,9 +616,94 @@ export default function App() {
   // Handlers
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await loadAllFromSupabase();
+    await loadAllFromSupabase(true);
     setIsRefreshing(false);
     showCloudNotification('تم تحديث كافة البيانات من قاعدة بيانات Supabase ✓');
+  };
+
+  // Branch Management Handlers (Add / Rename / Delete with full Supabase sync)
+  const handleAddBranch = async (branchName: string) => {
+    const clean = branchName.trim();
+    if (!clean) return;
+    if (branches.includes(clean)) {
+      showCloudNotification(`الفرع "${clean}" مسجل بالفعل في النظام`);
+      return;
+    }
+    const nextBranches = [...branches, clean];
+    setBranches(nextBranches);
+
+    beginMutation();
+    const ok = await saveBranchesToSupabase(nextBranches);
+    endMutation(ok);
+    if (ok) {
+      showCloudNotification(`تم إضافة الفرع الجديد (${clean}) وحفظه في Supabase ✓`);
+    }
+  };
+
+  const handleRenameBranch = async (oldName: string, newName: string) => {
+    const cleanNew = newName.trim();
+    if (!cleanNew || cleanNew === oldName) return;
+
+    const nextBranches = branches.map(b => (b === oldName ? cleanNew : b));
+    setBranches(nextBranches);
+
+    // Update all vehicles in this branch
+    const affectedVehicles: Vehicle[] = [];
+    setVehicles(prev =>
+      prev.map(v => {
+        if (v.branch === oldName) {
+          const updated = { ...v, branch: cleanNew, updatedAt: new Date().toISOString().slice(0, 10) };
+          affectedVehicles.push(updated);
+          return updated;
+        }
+        return v;
+      })
+    );
+
+    if (filters.branch === oldName) {
+      setFilters(prev => ({ ...prev, branch: cleanNew }));
+    }
+
+    beginMutation();
+    const promises: Promise<any>[] = [saveBranchesToSupabase(nextBranches)];
+    if (affectedVehicles.length > 0) {
+      promises.push(seedVehiclesToSupabase(affectedVehicles));
+    }
+    await Promise.all(promises);
+    endMutation(true);
+    showCloudNotification(`تم تعديل اسم الفرع إلى "${cleanNew}" وتحديث المركبات في Supabase ✓`);
+  };
+
+  const handleDeleteBranch = async (branchName: string) => {
+    if (branches.length <= 1) return;
+    const nextBranches = branches.filter(b => b !== branchName);
+    const fallbackBranch = nextBranches[0] || 'هايد بارك (Hyde Park)';
+    setBranches(nextBranches);
+
+    const affectedVehicles: Vehicle[] = [];
+    setVehicles(prev =>
+      prev.map(v => {
+        if (v.branch === branchName) {
+          const updated = { ...v, branch: fallbackBranch, updatedAt: new Date().toISOString().slice(0, 10) };
+          affectedVehicles.push(updated);
+          return updated;
+        }
+        return v;
+      })
+    );
+
+    if (filters.branch === branchName) {
+      setFilters(prev => ({ ...prev, branch: 'all' }));
+    }
+
+    beginMutation();
+    const promises: Promise<any>[] = [saveBranchesToSupabase(nextBranches)];
+    if (affectedVehicles.length > 0) {
+      promises.push(seedVehiclesToSupabase(affectedVehicles));
+    }
+    await Promise.all(promises);
+    endMutation(true);
+    showCloudNotification(`تم حذف الفرع "${branchName}" وتحديث قاعدة بيانات Supabase ✓`);
   };
 
   const handleAddVehicle = async (newV: Omit<Vehicle, 'id' | 'createdAt' | 'updatedAt'>) => {
@@ -572,6 +718,14 @@ export default function App() {
       updatedAt: referenceDate,
     };
     setVehicles(prev => [created, ...prev]);
+    setActiveVehicle(created);
+
+    // Ensure branch is in branches list
+    let nextBranches = branches;
+    if (created.branch && !branches.includes(created.branch)) {
+      nextBranches = [...branches, created.branch];
+      setBranches(nextBranches);
+    }
 
     const audit: AuditRecord = {
       id: `aud-${Date.now()}`,
@@ -586,14 +740,18 @@ export default function App() {
     };
     setAuditLogs(prev => [audit, ...prev]);
 
-    setCloudStatus('syncing');
-    const [ok] = await Promise.all([
+    beginMutation();
+    const promises: Promise<boolean>[] = [
       saveVehicleToSupabase(created),
       saveAuditToSupabase(audit)
-    ]);
-    setCloudStatus(ok ? 'connected' : 'error');
+    ];
+    if (nextBranches !== branches) {
+      promises.push(saveBranchesToSupabase(nextBranches));
+    }
+    const [ok] = await Promise.all(promises);
+    endMutation(ok);
     if (ok) {
-      showCloudNotification(`تم حفظ السيارة رقم (${created.vehicleNumber}) في Supabase بنجاح ✓`);
+      showCloudNotification(`تم حفظ السيارة رقم (${created.vehicleNumber}) ورخصها في Supabase بنجاح ✓`);
     }
   };
 
@@ -604,28 +762,63 @@ export default function App() {
     }
     const oldVehicle = vehicles.find(v => v.id === updatedV.id);
     setVehicles(prev => prev.map((v) => (v.id === updatedV.id ? updatedV : v)));
+    setActiveVehicle(prev => (prev && prev.id === updatedV.id ? updatedV : prev));
+
+    let nextBranches = branches;
+    if (updatedV.branch && !branches.includes(updatedV.branch)) {
+      nextBranches = [...branches, updatedV.branch];
+      setBranches(nextBranches);
+    }
+
+    const nowDate = new Date().toISOString().slice(0, 10);
+    const nowTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
 
     const audit: AuditRecord = {
       id: `aud-${Date.now()}`,
       user: currentUser?.name || 'مسؤول النظام',
       userRole: userRole,
-      action: 'تحديث بيانات ورخص مركبة',
+      action: oldVehicle && oldVehicle.branch !== updatedV.branch ? 'تحديث رخص ونقل فرع المركبة' : 'تحديث بيانات ورخص مركبة',
       vehicleNumber: `${updatedV.plateLetters || ''} ${updatedV.vehicleNumber}`.trim(),
-      oldValue: oldVehicle ? `مرور: ${oldVehicle.trafficLicense.expiryDate} | إعلان: ${oldVehicle.commercialLicense.expiryDate}` : '—',
-      newValue: `مرور: ${updatedV.trafficLicense.expiryDate} | إعلان: ${updatedV.commercialLicense.expiryDate}`,
-      date: new Date().toISOString().slice(0, 10),
-      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+      oldValue: oldVehicle ? `فرع: ${oldVehicle.branch} | مرور: ${oldVehicle.trafficLicense.expiryDate} | إعلان: ${oldVehicle.commercialLicense.expiryDate}` : '—',
+      newValue: `فرع: ${updatedV.branch} | مرور: ${updatedV.trafficLicense.expiryDate} | إعلان: ${updatedV.commercialLicense.expiryDate}`,
+      date: nowDate,
+      time: nowTime
     };
     setAuditLogs(prev => [audit, ...prev]);
 
-    setCloudStatus('syncing');
-    const [ok] = await Promise.all([
+    // If branch was also changed inside Edit modal, log a TransferRecord automatically
+    let branchTransferRecord: TransferRecord | null = null;
+    if (oldVehicle && oldVehicle.branch !== updatedV.branch) {
+      branchTransferRecord = {
+        id: `tr-${Date.now()}`,
+        vehicleId: updatedV.id,
+        vehicleNumber: updatedV.vehicleNumber,
+        fromBranch: oldVehicle.branch,
+        toBranch: updatedV.branch,
+        date: nowDate,
+        time: nowTime,
+        transferredBy: currentUser?.name || 'مسؤول النظام',
+        reason: 'تعديل الفرع المخصص من نافذة إدارة بيانات المركبة',
+        notes: updatedV.notes || ''
+      };
+      setTransfers(prev => [branchTransferRecord!, ...prev]);
+    }
+
+    beginMutation();
+    const promises: Promise<boolean>[] = [
       saveVehicleToSupabase(updatedV),
       saveAuditToSupabase(audit)
-    ]);
-    setCloudStatus(ok ? 'connected' : 'error');
+    ];
+    if (branchTransferRecord) {
+      promises.push(saveTransferToSupabase(branchTransferRecord));
+    }
+    if (nextBranches !== branches) {
+      promises.push(saveBranchesToSupabase(nextBranches));
+    }
+    const [ok] = await Promise.all(promises);
+    endMutation(ok);
     if (ok) {
-      showCloudNotification(`تم تحديث رخص السيارة (${updatedV.vehicleNumber}) في Supabase ✓`);
+      showCloudNotification(`تم حفظ تعديلات رخص وبيانات السيارة (${updatedV.vehicleNumber}) في Supabase ✓`);
     }
   };
 
@@ -636,8 +829,9 @@ export default function App() {
     }
     const target = vehicles.find(v => v.id === vehicleId);
     setVehicles(prev => prev.filter(v => v.id !== vehicleId));
+    setActiveVehicle(prev => (prev && prev.id === vehicleId ? null : prev));
 
-    setCloudStatus('syncing');
+    beginMutation();
     const ok = await deleteVehicleFromSupabase(vehicleId);
     if (target) {
       const audit: AuditRecord = {
@@ -654,9 +848,9 @@ export default function App() {
       setAuditLogs(prev => [audit, ...prev]);
       await saveAuditToSupabase(audit);
     }
-    setCloudStatus(ok ? 'connected' : 'error');
+    endMutation(ok);
     if (ok) {
-      showCloudNotification('تم حذف المركبة من قاعدة بيانات Supabase ✓');
+      showCloudNotification('تم حذف المركبة نهائياً من قاعدة بيانات Supabase ✓');
     }
   };
 
@@ -677,7 +871,15 @@ export default function App() {
     if (target) {
       updatedVehicle = { ...target, branch: toBranch, updatedAt: new Date().toISOString().slice(0, 10) };
       setVehicles(prev => prev.map((v) => (v.id === vehicleId && updatedVehicle ? updatedVehicle : v)));
+      setActiveVehicle(prev => (prev && prev.id === vehicleId && updatedVehicle ? updatedVehicle : prev));
     }
+
+    let nextBranches = branches;
+    if (toBranch && !branches.includes(toBranch)) {
+      nextBranches = [...branches, toBranch];
+      setBranches(nextBranches);
+    }
+
     const nowTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const record: TransferRecord = {
       id: `tr-${Date.now()}`,
@@ -706,7 +908,7 @@ export default function App() {
     };
     setAuditLogs(prev => [audit, ...prev]);
 
-    setCloudStatus('syncing');
+    beginMutation();
     const promises: Promise<boolean>[] = [
       saveTransferToSupabase(record),
       saveAuditToSupabase(audit)
@@ -714,9 +916,12 @@ export default function App() {
     if (updatedVehicle) {
       promises.push(saveVehicleToSupabase(updatedVehicle));
     }
+    if (nextBranches !== branches) {
+      promises.push(saveBranchesToSupabase(nextBranches));
+    }
     const results = await Promise.all(promises);
     const ok = results.every(Boolean);
-    setCloudStatus(ok ? 'connected' : 'error');
+    endMutation(ok);
     if (ok) {
       showCloudNotification(`تم تسجيل نقل السيارة (${target?.vehicleNumber || ''}) إلى ${toBranch} في Supabase ✓`);
     }
@@ -729,7 +934,7 @@ export default function App() {
           onLogin={handleLogin}
           users={users}
           totalFleet={vehicles.length}
-          branchesCount={BRANCHES.length}
+          branchesCount={effectiveBranches.length}
           lang={lang}
           existingUser={currentUser}
         />
@@ -879,7 +1084,7 @@ export default function App() {
               lang={lang}
               filters={filters}
               onFilterChange={setFilters}
-              branches={BRANCHES}
+              branches={effectiveBranches}
               totalResults={filteredVehicles.length}
               totalFleet={vehicles.length}
               canAddVehicle={canUserAdd}
@@ -976,7 +1181,7 @@ export default function App() {
               lang={lang}
               filters={filters}
               onFilterChange={setFilters}
-              branches={BRANCHES}
+              branches={effectiveBranches}
               totalResults={filteredVehicles.length}
               totalFleet={vehicles.length}
               canAddVehicle={canUserAdd}
@@ -1103,7 +1308,7 @@ export default function App() {
               lang={lang}
               filters={filters}
               onFilterChange={setFilters}
-              branches={BRANCHES}
+              branches={effectiveBranches}
               totalResults={filteredVehicles.length}
               totalFleet={vehicles.length}
               canAddVehicle={canUserAdd}
@@ -1189,17 +1394,25 @@ export default function App() {
                 setThresholdDays(days);
                 const updated = { ...settings, expiringDaysThreshold: days };
                 setSettings(updated);
-                await saveSettingsToSupabase(updated, referenceDate);
+                beginMutation();
+                const ok = await saveSettingsToSupabase(updated, referenceDate);
+                endMutation(ok);
                 showCloudNotification(`تم تحديث مهلة التنبيه إلى (${days} يوم) في Supabase ✓`);
               }}
               referenceDate={referenceDate}
               onUpdateReferenceDate={async (d) => {
                 setReferenceDate(d);
-                await saveSettingsToSupabase(settings, d);
+                beginMutation();
+                const ok = await saveSettingsToSupabase(settings, d);
+                endMutation(ok);
+                showCloudNotification(`تم تحديث التاريخ المرجعي إلى (${d}) في Supabase ✓`);
               }}
               userRole={userRole}
               onUpdateRole={setUserRole}
-              branches={BRANCHES}
+              branches={effectiveBranches}
+              onAddBranch={handleAddBranch}
+              onRenameBranch={handleRenameBranch}
+              onDeleteBranch={handleDeleteBranch}
               totalVehicles={vehicles.length}
               settings={settings}
               onUpdateSettings={async (newSettings) => {
@@ -1207,11 +1420,21 @@ export default function App() {
                 if (newSettings.expiringDaysThreshold) {
                   setThresholdDays(newSettings.expiringDaysThreshold);
                 }
-                await saveSettingsToSupabase(newSettings, referenceDate);
+                beginMutation();
+                const ok = await saveSettingsToSupabase(newSettings, referenceDate);
+                endMutation(ok);
                 showCloudNotification('تم حفظ إعدادات النظام في سحابة Supabase ✓');
               }}
               vehicles={vehicles}
-              onRestoreVehicles={setVehicles}
+              onRestoreVehicles={async (restoredList) => {
+                setVehicles(restoredList);
+                beginMutation();
+                const res = await seedVehiclesToSupabase(restoredList);
+                endMutation(res.success);
+                if (res.success) {
+                  showCloudNotification(`تم استعادة وحفظ (${restoredList.length}) مركبة في Supabase ✓`);
+                }
+              }}
               onOpenUserManagement={() => setIsUserManagementOpen(true)}
             />
           </div>
@@ -1239,8 +1462,9 @@ export default function App() {
         <AddVehicleModal
           isOpen={isAddOpen}
           onClose={() => setIsAddOpen(false)}
-          branches={BRANCHES}
+          branches={effectiveBranches}
           onAdd={handleAddVehicle}
+          onAddBranch={handleAddBranch}
           lang={lang}
         />
       )}
@@ -1251,10 +1475,11 @@ export default function App() {
           isOpen={isEditOpen}
           onClose={() => setIsEditOpen(false)}
           vehicles={vehicles}
-          branches={BRANCHES}
-          initialVehicleId={activeVehicle?.id}
+          branches={effectiveBranches}
+          initialVehicleId={liveActiveVehicle?.id}
           onSave={handleUpdateVehicle}
           onDelete={canUserDelete ? handleDeleteVehicle : undefined}
+          onAddBranch={handleAddBranch}
           canDelete={canUserDelete}
           lang={lang}
         />
@@ -1266,9 +1491,10 @@ export default function App() {
           isOpen={isTransferOpen}
           onClose={() => setIsTransferOpen(false)}
           vehicles={vehicles}
-          branches={BRANCHES}
-          initialVehicleId={activeVehicle?.id}
+          branches={effectiveBranches}
+          initialVehicleId={liveActiveVehicle?.id}
           onTransfer={handleTransferVehicle}
+          onAddBranch={handleAddBranch}
           lang={lang}
           canTransfer={canUserTransfer}
         />
@@ -1289,7 +1515,7 @@ export default function App() {
       {/* 5. Quick Vehicle Drawer */}
       <VehicleDrawer
         lang={lang}
-        vehicle={activeVehicle}
+        vehicle={liveActiveVehicle}
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         thresholdDays={thresholdDays}
@@ -1301,6 +1527,11 @@ export default function App() {
           setIsDrawerOpen(false);
           setIsEditOpen(true);
         } : undefined}
+        onTransferVehicle={canUserTransfer ? (v) => {
+          setActiveVehicle(v);
+          setIsDrawerOpen(false);
+          setIsTransferOpen(true);
+        } : undefined}
       />
 
       {/* 6. User Management Modal */}
@@ -1311,7 +1542,7 @@ export default function App() {
           users={users}
           onUpdateUsers={handleUpdateUsers}
           currentUser={currentUser}
-          branches={BRANCHES}
+          branches={effectiveBranches}
           lang={lang}
         />
       )}
@@ -1336,6 +1567,7 @@ export default function App() {
             users={users}
             transfers={transfers}
             auditLogs={auditLogs}
+            branches={effectiveBranches}
             settings={settings}
             referenceDate={referenceDate}
             onRefreshVehicles={handleRefresh}

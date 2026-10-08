@@ -21,7 +21,11 @@ import {
   Sparkles,
   Car,
   Clock,
-  Users
+  Users,
+  Store,
+  Plus,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { UserRole, AppSettings, Vehicle } from '../types';
 import { translations, Language } from '../utils/i18n';
@@ -36,6 +40,9 @@ interface SettingsViewProps {
   userRole: UserRole;
   onUpdateRole: (role: UserRole) => void;
   branches: string[];
+  onAddBranch?: (branchName: string) => void;
+  onRenameBranch?: (oldName: string, newName: string) => void;
+  onDeleteBranch?: (branchName: string) => void;
   totalVehicles: number;
   settings?: AppSettings;
   onUpdateSettings?: (settings: AppSettings) => void;
@@ -53,6 +60,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   userRole,
   onUpdateRole,
   branches,
+  onAddBranch,
+  onRenameBranch,
+  onDeleteBranch,
   totalVehicles,
   settings: initialSettings,
   onUpdateSettings,
@@ -62,7 +72,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const t = translations[lang];
 
-  const [activeSection, setActiveSection] = useState<'thresholds' | 'financial' | 'corporate' | 'governance' | 'rbac' | 'backup'>('thresholds');
+  const [activeSection, setActiveSection] = useState<'thresholds' | 'branches' | 'financial' | 'corporate' | 'governance' | 'rbac' | 'backup'>('thresholds');
+  const [newBranchInput, setNewBranchInput] = useState('');
+  const [editingBranchName, setEditingBranchName] = useState<string | null>(null);
+  const [editingBranchValue, setEditingBranchValue] = useState('');
+  const [deletingBranchName, setDeletingBranchName] = useState<string | null>(null);
 
   // Local settings state
   const [formSettings, setFormSettings] = useState<AppSettings>(() => {
@@ -216,6 +230,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="flex flex-wrap gap-2 p-1.5 bg-slate-900/90 rounded-2xl border border-white/10">
         {[
           { id: 'thresholds', label: 'المهل والتنبيهات', icon: Sliders },
+          { id: 'branches', label: `إدارة الفروع (${branches.length})`, icon: Store },
           { id: 'financial', label: 'تكاليف وميزانية الرخص', icon: DollarSign },
           { id: 'corporate', label: 'الهوية والترويسة الرسمية', icon: Building2 },
           { id: 'governance', label: 'سياسات تشغيل الأسطول', icon: Shield },
@@ -362,6 +377,168 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="font-mono">{formatDateWithDayName(referenceDate)}</span>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 1.5: BRANCHES MANAGEMENT (إدارة فروع سعودي سوبر ماركت)            */}
+      {/* ========================================================================= */}
+      {activeSection === 'branches' && (
+        <div className="rounded-2xl bg-slate-900/90 border border-white/10 p-6 shadow-xl space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-white/10">
+            <div className="flex items-center gap-3">
+              <Store className="w-5 h-5 text-emerald-400" />
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  إدارة فروع شركة سعودي سوبر ماركت ({branches.length} فرع نشط)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  إضافة فروع جديدة، تعديل أسماء الفروع الحالية، أو حذف الفروع غير المستخدمة مع المزامنة الفورية في Supabase.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Add New Branch Form */}
+          <div className="p-4 rounded-xl bg-slate-800/50 border border-emerald-500/30 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <input
+              type="text"
+              value={newBranchInput}
+              onChange={(e) => setNewBranchInput(e.target.value)}
+              placeholder="اكتب اسم الفرع الجديد (مثال: فرع المعادي الجديدة - Maadi)..."
+              className="flex-1 bg-slate-900 border border-white/15 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const clean = newBranchInput.trim();
+                if (!clean) return;
+                if (onAddBranch) {
+                  onAddBranch(clean);
+                }
+                setNewBranchInput('');
+              }}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>إضافة فرع جديد للنظام</span>
+            </button>
+          </div>
+
+          {/* Branches Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {branches.map((branchName, idx) => {
+              const branchVehiclesCount = vehicles.filter(v => v.branch === branchName).length;
+              const isEditingThis = editingBranchName === branchName;
+              const isDeletingThis = deletingBranchName === branchName;
+
+              return (
+                <div
+                  key={branchName}
+                  className="p-3.5 rounded-xl bg-slate-950/70 border border-white/10 hover:border-amber-500/30 transition-all flex flex-col gap-2.5"
+                >
+                  {isEditingThis ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={editingBranchValue}
+                        onChange={(e) => setEditingBranchValue(e.target.value)}
+                        className="flex-1 bg-slate-900 border border-amber-500/60 rounded-lg px-2.5 py-1.5 text-xs text-white font-bold"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const clean = editingBranchValue.trim();
+                          if (clean && clean !== branchName && onRenameBranch) {
+                            onRenameBranch(branchName, clean);
+                          }
+                          setEditingBranchName(null);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold cursor-pointer"
+                      >
+                        حفظ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingBranchName(null)}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+                      >
+                        إلغاء
+                      </button>
+                    </div>
+                  ) : isDeletingThis ? (
+                    <div className="flex items-center justify-between gap-2 bg-rose-950/40 border border-rose-500/40 px-3 py-1.5 rounded-lg">
+                      <span className="text-[11px] text-rose-200 font-bold">
+                        حذف &quot;{branchName}&quot;؟ {branchVehiclesCount > 0 ? `(سيتم نقل ${branchVehiclesCount} سيارة للفرع الرئيسي)` : ''}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onDeleteBranch) onDeleteBranch(branchName);
+                            setDeletingBranchName(null);
+                          }}
+                          className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black cursor-pointer"
+                        >
+                          تأكيد الحذف
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingBranchName(null)}
+                          className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-[10px] cursor-pointer"
+                        >
+                          تراجع
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-6 h-6 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[11px] font-bold flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <div className="truncate">
+                          <div className="text-xs font-bold text-white truncate">{branchName}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {branchVehiclesCount} سيارة تابعة للفرع
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingBranchName(branchName);
+                            setEditingBranchValue(branchName);
+                            setDeletingBranchName(null);
+                          }}
+                          className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-300 border border-amber-500/25 transition-colors cursor-pointer"
+                          title="تعديل اسم الفرع"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        {branches.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeletingBranchName(branchName);
+                              setEditingBranchName(null);
+                            }}
+                            className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-300 border border-rose-500/25 transition-colors cursor-pointer"
+                            title="حذف الفرع"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
