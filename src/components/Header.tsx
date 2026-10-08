@@ -170,7 +170,7 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Quick Admin User Management Button - Exclusive to Admin */}
-          {activeRole === 'admin' && currentUser?.role === 'admin' && onOpenUserManagement && (
+          {currentUser?.role === 'admin' && onOpenUserManagement && (
             <button
               onClick={onOpenUserManagement}
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/25 via-amber-400/20 to-amber-600/25 hover:from-amber-500/35 hover:to-amber-600/35 text-amber-300 text-xs font-bold border border-amber-500/50 shadow-md shadow-amber-950/40 transition-all cursor-pointer ring-1 ring-amber-400/30 active:scale-95"

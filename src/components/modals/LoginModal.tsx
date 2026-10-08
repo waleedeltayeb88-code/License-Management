@@ -62,8 +62,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setIsLoading(true);
 
     setTimeout(() => {
-      // Find matching user
-      const candidatePool = [...users, ...INITIAL_USERS];
+      // Find matching user from active users state
+      const candidatePool = users.length > 0 ? users : INITIAL_USERS;
       const found = candidatePool.find((u) => {
         const uName = (u.username || '').trim().toLowerCase();
         const uEmail = (u.email || '').trim().toLowerCase();
@@ -81,16 +81,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             cleanUser.includes('walid.adel') ||
             cleanUser.includes('waleed.eltayeb')
           )) ||
-          (u.role === 'fleet_manager' && (cleanUser === 'fleet' || cleanUser === 'fleet.manager')) ||
-          (u.role === 'branch_manager' && (cleanUser === 'branch' || cleanUser === 'branch.manager')) ||
-          (u.role === 'viewer' && (cleanUser === 'viewer' || cleanUser === 'view'));
+          (uName === 'fleet' && (cleanUser === 'fleet' || cleanUser === 'fleet.manager')) ||
+          (uName === 'branch' && (cleanUser === 'branch' || cleanUser === 'branch.manager')) ||
+          (uName === 'viewer' && (cleanUser === 'viewer' || cleanUser === 'view'));
 
         if (!isUserMatch) return false;
 
         const isPassMatch =
           (uPass && (uPass === cleanPass || uPass.toLowerCase() === cleanPass.toLowerCase())) ||
-          cleanPass === '123456' ||
-          cleanPass.toLowerCase() === uName ||
           (u.role === 'admin' && (
             cleanPass.toLowerCase() === 'admin' ||
             cleanPass === '123456' ||
@@ -105,7 +103,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
       if (found) {
         if (found.status === 'suspended') {
-          setErrorMsg(lang === 'ar' ? 'تم تعليق هذا الحساب مؤقتاً، يرجى مراجعة مدير النظام' : 'This account has been suspended. Contact system admin.');
+          setErrorMsg(lang === 'ar' ? 'تم تعطيل وتعليق هذا الحساب مؤقتاً، يرجى مراجعة مدير النظام (Admin)' : 'This account has been suspended. Contact system admin.');
           setIsLoading(false);
           return;
         }
@@ -120,7 +118,16 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         onLogin(updatedUser);
         onClose();
       } else {
+        const userByIdentity = candidatePool.find((u) => {
+          const uName = (u.username || '').trim().toLowerCase();
+          const uEmail = (u.email || '').trim().toLowerCase();
+          return uName === cleanUser || uEmail === cleanUser;
+        });
         setIsLoading(false);
+        if (userByIdentity && userByIdentity.status === 'suspended') {
+          setErrorMsg(lang === 'ar' ? 'تم تعطيل وتعليق هذا الحساب مؤقتاً، يرجى مراجعة مدير النظام (Admin)' : 'This account has been suspended. Contact system admin.');
+          return;
+        }
         setErrorMsg(
           lang === 'ar'
             ? 'بيانات الدخول غير صحيحة، يرجى التحقق من اسم المستخدم أو كلمة المرور'

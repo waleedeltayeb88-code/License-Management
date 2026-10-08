@@ -53,6 +53,7 @@ import {
   fetchUsersFromSupabase,
   saveUserToSupabase,
   saveAllUsersToSupabase,
+  deleteUserFromSupabase,
   fetchTransfersFromSupabase,
   saveTransferToSupabase, 
   seedTransfersToSupabase,
@@ -184,7 +185,7 @@ export default function App() {
   const canUserEdit = currentUserPermissions.canEditLicenses;
   const canUserTransfer = currentUserPermissions.canTransferVehicles;
   const canUserExport = currentUserPermissions.canExportReports;
-  const canUserManageUsers = currentUserPermissions.canManageUsers && userRole === 'admin';
+  const canUserManageUsers = currentUser?.role === 'admin' || !!currentUserPermissions.canManageUsers;
   const canUserManageSettings = currentUserPermissions.canManageSettings;
   const canUserDelete = !!currentUserPermissions.canDeleteRecords;
 
@@ -203,7 +204,10 @@ export default function App() {
     if (bottomTab === 'reports' && !canUserExport) {
       setBottomTab('dashboard');
     }
-  }, [bottomTab, canUserManageSettings, canUserExport]);
+    if (bottomTab === 'users_management' && !canUserManageUsers) {
+      setBottomTab('dashboard');
+    }
+  }, [bottomTab, canUserManageSettings, canUserExport, canUserManageUsers]);
 
   useEffect(() => {
     try {
@@ -263,8 +267,14 @@ export default function App() {
 
     // If currentUser was updated in the list, sync currentUser & userRole immediately
     if (currentUser) {
-      const updatedSelf = sanitizedList.find(u => u.id === currentUser.id);
+      const updatedSelf = sanitizedList.find(
+        u => u.id === currentUser.id || u.username.toLowerCase() === currentUser.username.toLowerCase()
+      );
       if (updatedSelf) {
+        if (updatedSelf.status === 'suspended' && updatedSelf.role !== 'admin') {
+          handleLogout();
+          return;
+        }
         setCurrentUser(updatedSelf);
         setUserRole(updatedSelf.role);
       }
@@ -277,6 +287,43 @@ export default function App() {
     if (ok) {
       showCloudNotification('تم حفظ وتحديث قائمة المستخدمين والصلاحيات في سحابة Supabase ✓');
     }
+  };
+
+  const handleDeleteUserAccount = async (userId: string, username?: string, email?: string) => {
+    const target = users.find(
+      u => u.id === userId || (username && u.username.toLowerCase() === username.toLowerCase())
+    );
+    const remaining = users.filter(
+      u =>
+        u.id !== userId &&
+        (!username || u.username.toLowerCase() !== username.toLowerCase())
+    );
+    const sanitizedList = mergeAndSanitizeUsers(remaining);
+    setUsers(sanitizedList);
+
+    const nowDate = new Date().toISOString().slice(0, 10);
+    const nowTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    if (target) {
+      const audit: AuditRecord = {
+        id: `aud-${Date.now()}`,
+        user: currentUser?.name || 'مدير النظام',
+        userRole: userRole,
+        action: 'حذف حساب مستخدم نهائياً',
+        vehicleNumber: `@${target.username}`,
+        oldValue: `${target.name} (${ROLE_DEFINITIONS[target.role]?.badgeAr || target.role})`,
+        newValue: 'تم حذف الحساب نهائياً',
+        date: nowDate,
+        time: nowTime
+      };
+      setAuditLogs(prev => [audit, ...prev]);
+      saveAuditToSupabase(audit);
+    }
+
+    beginMutation();
+    const delOk = await deleteUserFromSupabase(userId, username || target?.username, email || target?.email);
+    const syncOk = await saveAllUsersToSupabase(sanitizedList);
+    endMutation(delOk && syncOk);
+    showCloudNotification(`تم حذف حساب "${target?.name || username || 'المستخدم'}" نهائياً من المنظومة وSupabase ✓`);
   };
 
   // Dynamic Branches State (persisted locally + synced with Supabase public.branches)
@@ -426,7 +473,16 @@ export default function App() {
             if (!prev) return null;
             const found = merged.find(u => u.id === prev.id || u.username.toLowerCase() === prev.username.toLowerCase());
             if (found) {
+              if (found.status === 'suspended' && found.role !== 'admin') {
+                setIsLandingView(true);
+                return null;
+              }
               return found;
+            }
+            // If a non-admin user was deleted from Supabase, log them out immediately
+            if (prev.role !== 'admin' && prev.username.toLowerCase() !== 'admin') {
+              setIsLandingView(true);
+              return null;
             }
             return prev;
           });
@@ -971,15 +1027,13 @@ export default function App() {
           onRefreshData={handleRefresh}
           totalFleet={vehicles.length}
           currentUser={currentUser}
-          onOpenUserManagement={() => setIsUserManagementOpen(true)}
+          onOpenUserManagement={() => setBottomTab('users_management')}
           onOpenLandingPage={() => setIsLandingView(true)}
           onLogout={handleLogout}
           onSelectTab={(tab) => setBottomTab(tab)}
           usersCount={users.length}
           onOpenSupabase={
-            userRole === 'admin' &&
-            currentUser?.role === 'admin' &&
-            (currentUser?.username?.toLowerCase() === 'admin' || currentUser?.id === 'usr-1')
+            currentUser?.role === 'admin'
               ? () => setIsSupabaseOpen(true)
               : undefined
           }
@@ -1039,7 +1093,7 @@ export default function App() {
           isAdmin={canUserManageUsers}
           canManageSettings={canUserManageSettings}
           canExportReports={canUserExport}
-          onOpenUserManagement={() => setIsUserManagementOpen(true)}
+          onOpenUserManagement={() => setBottomTab('users_management')}
           onSelectTab={(tab) => {
             setBottomTab(tab);
             if (tab === 'vehicles_list') {
@@ -1435,7 +1489,29 @@ export default function App() {
                   showCloudNotification(`تم استعادة وحفظ (${restoredList.length}) مركبة في Supabase ✓`);
                 }
               }}
-              onOpenUserManagement={() => setIsUserManagementOpen(true)}
+              onOpenUserManagement={() => setBottomTab('users_management')}
+            />
+          </div>
+        )}
+
+        {/* VIEW G: USERS & PERMISSIONS MANAGEMENT (صفحة إدارة المستخدمين والصلاحيات الاحترافية) */}
+        {bottomTab === 'users_management' && currentUser && canUserManageUsers && (
+          <div className="mb-6">
+            <UserManagementModal
+              isOpen={true}
+              isPageMode={true}
+              onClose={() => setBottomTab('dashboard')}
+              users={users}
+              onUpdateUsers={handleUpdateUsers}
+              onDeleteUser={handleDeleteUserAccount}
+              currentUser={currentUser}
+              branches={effectiveBranches}
+              lang={lang}
+              auditLogs={auditLogs}
+              onSwitchUser={(u) => {
+                handleLogin(u);
+                showCloudNotification(`تم التبديل إلى حساب: ${u.name} (${ROLE_DEFINITIONS[u.role]?.badgeAr})`);
+              }}
             />
           </div>
         )}
@@ -1541,9 +1617,16 @@ export default function App() {
           onClose={() => setIsUserManagementOpen(false)}
           users={users}
           onUpdateUsers={handleUpdateUsers}
+          onDeleteUser={handleDeleteUserAccount}
           currentUser={currentUser}
           branches={effectiveBranches}
           lang={lang}
+          auditLogs={auditLogs}
+          onSwitchUser={(u) => {
+            handleLogin(u);
+            setIsUserManagementOpen(false);
+            showCloudNotification(`تم التبديل إلى حساب: ${u.name} (${ROLE_DEFINITIONS[u.role]?.badgeAr})`);
+          }}
         />
       )}
 
@@ -1556,23 +1639,21 @@ export default function App() {
         lang={lang}
       />
 
-      {/* 8. Supabase Database Integration Modal - Exclusive to Master Admin (Walid Adel) */}
-      {userRole === 'admin' &&
-        currentUser?.role === 'admin' &&
-        (currentUser?.username?.toLowerCase() === 'admin' || currentUser?.id === 'usr-1') && (
-          <SupabaseModal
-            isOpen={isSupabaseOpen}
-            onClose={() => setIsSupabaseOpen(false)}
-            vehicles={vehicles}
-            users={users}
-            transfers={transfers}
-            auditLogs={auditLogs}
-            branches={effectiveBranches}
-            settings={settings}
-            referenceDate={referenceDate}
-            onRefreshVehicles={handleRefresh}
-          />
-        )}
+      {/* 8. Supabase Database Integration Modal - Exclusive to Admin */}
+      {currentUser?.role === 'admin' && (
+        <SupabaseModal
+          isOpen={isSupabaseOpen}
+          onClose={() => setIsSupabaseOpen(false)}
+          vehicles={vehicles}
+          users={users}
+          transfers={transfers}
+          auditLogs={auditLogs}
+          branches={effectiveBranches}
+          settings={settings}
+          referenceDate={referenceDate}
+          onRefreshVehicles={handleRefresh}
+        />
+      )}
     </div>
   );
 }

@@ -171,8 +171,8 @@ export const ROLE_DEFINITIONS: Record<UserRole, RoleMeta> = {
 };
 
 /**
- * Sanitizes permissions for a given role so that restricted roles (like viewer or branch_manager)
- * never accidentally inherit admin/write privileges.
+ * Sanitizes permissions for a given role while preserving explicit custom permission overrides
+ * set by the administrator in the User Management system.
  */
 export function sanitizeUserPermissions(
   role: UserRole,
@@ -188,45 +188,19 @@ export function sanitizeUserPermissions(
     ...customPerms,
   };
 
-  if (role === 'viewer') {
-    // Viewer is strictly read-only — cannot edit, add, transfer, delete, or manage system/users
-    return {
-      ...merged,
-      canViewLicenses: true,
-      canEditLicenses: false,
-      canAddVehicles: false,
-      canTransferVehicles: false,
-      canManageUsers: false,
-      canManageSettings: false,
-      canDeleteRecords: false,
-    };
-  }
-
-  if (role === 'branch_manager') {
-    return {
-      ...merged,
-      canViewLicenses: true,
-      canTransferVehicles: false,
-      canManageUsers: false,
-      canManageSettings: false,
-      canDeleteRecords: false,
-    };
-  }
-
-  if (role === 'fleet_manager') {
-    return {
-      ...merged,
-      canViewLicenses: true,
-      canManageUsers: false,
-      canManageSettings: false,
-    };
-  }
-
   if (role === 'admin') {
-    return { ...ROLE_DEFAULT_PERMISSIONS.admin };
+    return {
+      ...ROLE_DEFAULT_PERMISSIONS.admin,
+      ...customPerms,
+      canViewLicenses: true,
+      canManageUsers: true,
+    };
   }
 
-  return merged;
+  return {
+    ...merged,
+    canViewLicenses: true,
+  };
 }
 
 /**

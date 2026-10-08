@@ -19,7 +19,8 @@ export type BottomNavTab =
   | 'all_licenses' 
   | 'reports' 
   | 'transfers' 
-  | 'settings';
+  | 'settings'
+  | 'users_management';
 
 export interface NavCounts {
   totalVehicles?: number;
@@ -238,13 +239,23 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         })}
 
         {/* 7th EXCLUSIVE TAB: ADMIN USERS & PERMISSIONS - SHOWN ONLY TO ADMIN */}
-        {isAdmin && onOpenUserManagement && (
+        {isAdmin && (
           <button
             type="button"
-            onClick={onOpenUserManagement}
-            className="relative flex items-center justify-between p-2.5 sm:p-3 rounded-xl border border-amber-500/50 bg-gradient-to-br from-amber-500/20 via-amber-950/40 to-slate-900 shadow-[0_0_20px_rgba(245,158,11,0.2)] hover:border-amber-400 hover:from-amber-500/30 hover:shadow-[0_0_28px_rgba(245,158,11,0.35)] transition-all duration-200 cursor-pointer text-right group select-none ring-1 ring-amber-400/40"
-            title="خاص بمدير النظام: إدارة حسابات المستخدمين والصلاحيات والفروع"
+            onClick={() => {
+              onSelectTab('users_management');
+            }}
+            className={`relative flex items-center justify-between p-2.5 sm:p-3 rounded-xl border transition-all duration-200 cursor-pointer text-right group select-none ${
+              activeTab === 'users_management'
+                ? 'border-amber-400 bg-gradient-to-br from-amber-500/30 via-amber-950/60 to-slate-900 shadow-[0_0_28px_rgba(245,158,11,0.35)] ring-2 ring-amber-400/60 scale-[1.01]'
+                : 'border-amber-500/40 bg-gradient-to-br from-amber-500/15 via-amber-950/30 to-slate-900 shadow-[0_0_16px_rgba(245,158,11,0.15)] hover:border-amber-400 hover:from-amber-500/25 hover:shadow-[0_0_24px_rgba(245,158,11,0.3)] ring-1 ring-amber-400/30'
+            }`}
+            title="خاص بمدير النظام: صفحة إدارة حسابات المستخدمين والصلاحيات والفروع"
           >
+            {activeTab === 'users_management' && (
+              <div className="absolute -bottom-[1px] left-3 right-3 h-[2.5px] rounded-full bg-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+            )}
+
             {/* Glowing top pill */}
             <div className="flex flex-col text-right min-w-0 pr-0.5">
               <div className="flex items-center gap-1.5">
@@ -254,13 +265,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               </div>
               
               <span className="text-[10px] text-amber-300/80 group-hover:text-amber-200 mt-0.5 truncate max-w-[125px]">
-                {isAr ? 'خاص بالمدير 👑' : 'Admin Only 👑'}
+                {isAr ? 'صفحة الإدارة 👑' : 'Admin Page 👑'}
               </span>
 
               {/* Badge Pill */}
               <div className="mt-1.5 flex items-center gap-1">
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black bg-amber-500 text-slate-950 shadow-sm">
-                  <span>👑 {isAr ? 'لوحة الإدارة' : 'Admin'}</span>
+                  <span>👑 {isAr ? 'تحكم كامل' : 'Full Control'}</span>
                 </span>
               </div>
             </div>

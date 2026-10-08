@@ -133,7 +133,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       return;
     }
 
-    const candidatePool = [...users, ...INITIAL_USERS];
+    const candidatePool = users.length > 0 ? users : INITIAL_USERS;
     const matched = candidatePool.find((u) => {
       const uName = (u.username || '').trim().toLowerCase();
       const uEmail = (u.email || '').trim().toLowerCase();
@@ -151,16 +151,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           cleanUser.includes('walid.adel') ||
           cleanUser.includes('waleed.eltayeb')
         )) ||
-        (u.role === 'fleet_manager' && (cleanUser === 'fleet' || cleanUser === 'fleet.manager')) ||
-        (u.role === 'branch_manager' && (cleanUser === 'branch' || cleanUser === 'branch.manager')) ||
-        (u.role === 'viewer' && (cleanUser === 'viewer' || cleanUser === 'view'));
+        (uName === 'fleet' && (cleanUser === 'fleet' || cleanUser === 'fleet.manager')) ||
+        (uName === 'branch' && (cleanUser === 'branch' || cleanUser === 'branch.manager')) ||
+        (uName === 'viewer' && (cleanUser === 'viewer' || cleanUser === 'view'));
 
       if (!isUserMatch) return false;
 
       const isPassMatch =
         (uPass && (uPass === cleanPass || uPass.toLowerCase() === cleanPass.toLowerCase())) ||
-        cleanPass === '123456' ||
-        cleanPass.toLowerCase() === uName ||
         (u.role === 'admin' && (
           cleanPass.toLowerCase() === 'admin' ||
           cleanPass === '123456' ||
@@ -175,11 +173,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
     if (matched) {
       if (matched.status === 'suspended') {
-        setErrorMsg(lang === 'ar' ? 'تم تعليق هذا الحساب المؤسسي. يرجى مراجعة إدارة تقنية المعلومات' : 'Account is suspended');
+        setErrorMsg(lang === 'ar' ? 'تم تعطيل وتعليق هذا الحساب المؤسسي. يرجى مراجعة مدير النظام (Admin)' : 'Account is suspended');
         return;
       }
       triggerAuthFlow(matched);
     } else {
+      // Check if user exists in pool with correct username/email so we can show if suspended even on wrong password
+      const userByIdentity = candidatePool.find((u) => {
+        const uName = (u.username || '').trim().toLowerCase();
+        const uEmail = (u.email || '').trim().toLowerCase();
+        return uName === cleanUser || uEmail === cleanUser;
+      });
+      if (userByIdentity && userByIdentity.status === 'suspended') {
+        setErrorMsg(lang === 'ar' ? 'تم تعطيل وتعليق هذا الحساب المؤسسي. يرجى مراجعة مدير النظام (Admin)' : 'Account is suspended');
+        return;
+      }
       setErrorMsg(
         lang === 'ar'
           ? 'اسم المستخدم أو كلمة المرور غير صحيحة. يرجى التحقق وإعادة المحاولة'

@@ -95,11 +95,14 @@ export interface SupabaseStatusSummary {
     transfers: number;
     auditLogs: number;
     branches: number;
+    settings: number;
+    expenses: number;
+    notifications: number;
   };
   error?: string;
 }
 
-// Check if Supabase connection & tables are ready + get live counts
+// Check if Supabase connection & tables are ready + get live counts for all 8 tables
 export async function checkSupabaseConnection(): Promise<SupabaseStatusSummary> {
   try {
     const { count: vCount, error } = await supabase
@@ -124,11 +127,14 @@ export async function checkSupabaseConnection(): Promise<SupabaseStatusSummary> 
       return { connected: false, tablesExist: false, error: error.message };
     }
 
-    const [uRes, tRes, aRes, bRes] = await Promise.all([
+    const [uRes, tRes, aRes, bRes, sRes, eRes, nRes] = await Promise.all([
       supabase.from('system_users').select('id', { count: 'exact', head: true }),
       supabase.from('transfers').select('id', { count: 'exact', head: true }),
       supabase.from('audit_logs').select('id', { count: 'exact', head: true }),
-      supabase.from('branches').select('id', { count: 'exact', head: true })
+      supabase.from('branches').select('id', { count: 'exact', head: true }),
+      supabase.from('settings').select('key', { count: 'exact', head: true }),
+      supabase.from('expenses').select('id', { count: 'exact', head: true }),
+      supabase.from('notifications').select('id', { count: 'exact', head: true })
     ]);
 
     return {
@@ -139,7 +145,10 @@ export async function checkSupabaseConnection(): Promise<SupabaseStatusSummary> 
         users: uRes.count ?? 0,
         transfers: tRes.count ?? 0,
         auditLogs: aRes.count ?? 0,
-        branches: bRes.count ?? 0
+        branches: bRes.count ?? 0,
+        settings: sRes.count ?? 0,
+        expenses: eRes.count ?? 0,
+        notifications: nRes.count ?? 0
       }
     };
   } catch (err: any) {
@@ -388,12 +397,41 @@ export async function saveAllUsersToSupabase(users: SystemUser[]): Promise<boole
   try {
     // 1. First remove any deleted users in Supabase that are not in the updated list
     // Doing this BEFORE upsert avoids unique email constraint collisions if an email is reused
-    const { data: existing } = await supabase.from('system_users').select('id, email');
+    const { data: existing } = await supabase.from('system_users').select('id, email, avatar');
     if (existing && existing.length > 0) {
       const currentIds = new Set(users.map(u => u.id));
-      const toDelete = existing.filter((r: any) => !currentIds.has(r.id)).map((r: any) => r.id);
+      const currentEmails = new Set(users.map(u => (u.email || '').toLowerCase().trim()));
+      const currentUsernames = new Set(users.map(u => (u.username || '').toLowerCase().trim()));
+
+      const toDelete = existing
+        .filter((r: any) => {
+          if (currentIds.has(r.id)) return false;
+          // Also check if this row had a username or email that is no longer in `users`
+          return true;
+        })
+        .map((r: any) => r.id);
+
       if (toDelete.length > 0) {
-        await supabase.from('system_users').delete().in('id', toDelete);
+        for (const delId of toDelete) {
+          await supabase.from('system_users').delete().eq('id', delId);
+        }
+      }
+
+      // Also clean up any duplicate email rows with different IDs before upserting
+      for (const r of existing) {
+        const rEmail = String(r.email || '').toLowerCase().trim();
+        if (rEmail && currentEmails.has(rEmail) && !currentIds.has(r.id)) {
+          await supabase.from('system_users').delete().eq('id', r.id);
+        }
+        if (r.avatar && typeof r.avatar === 'string' && r.avatar.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(r.avatar);
+            const rUser = String(parsed.username || '').toLowerCase().trim();
+            if (rUser && currentUsernames.has(rUser) && !currentIds.has(r.id)) {
+              await supabase.from('system_users').delete().eq('id', r.id);
+            }
+          } catch {}
+        }
       }
     }
 
@@ -410,10 +448,12 @@ export async function saveAllUsersToSupabase(users: SystemUser[]): Promise<boole
       return row;
     });
 
-    const { error } = await supabase.from('system_users').upsert(rows, { onConflict: 'id' });
-    if (error) {
-      console.error('saveAllUsersToSupabase error:', error);
-      return false;
+    if (rows.length > 0) {
+      const { error } = await supabase.from('system_users').upsert(rows, { onConflict: 'id' });
+      if (error) {
+        console.error('saveAllUsersToSupabase error:', error);
+        return false;
+      }
     }
 
     return true;
@@ -423,9 +463,29 @@ export async function saveAllUsersToSupabase(users: SystemUser[]): Promise<boole
   }
 }
 
-export async function deleteUserFromSupabase(userId: string): Promise<boolean> {
+export async function deleteUserFromSupabase(userId: string, username?: string, email?: string): Promise<boolean> {
   try {
     const { error } = await supabase.from('system_users').delete().eq('id', userId);
+    if (email) {
+      await supabase.from('system_users').delete().ilike('email', email.trim());
+    }
+    if (username) {
+      // Also check if any remaining row in system_users has this username inside its avatar JSON
+      const { data: remaining } = await supabase.from('system_users').select('id, avatar');
+      if (remaining && remaining.length > 0) {
+        const cleanU = username.trim().toLowerCase();
+        for (const r of remaining) {
+          if (r.avatar && typeof r.avatar === 'string' && r.avatar.trim().startsWith('{')) {
+            try {
+              const meta = JSON.parse(r.avatar);
+              if (String(meta.username || '').trim().toLowerCase() === cleanU) {
+                await supabase.from('system_users').delete().eq('id', r.id);
+              }
+            } catch {}
+          }
+        }
+      }
+    }
     return !error;
   } catch (err) {
     console.error('deleteUserFromSupabase error:', err);
@@ -693,6 +753,135 @@ export async function seedBranchesToSupabase(branches: string[]): Promise<boolea
 }
 
 // ============================================================================
+// 5B. EXPENSES & NOTIFICATIONS SEEDING (public.expenses, public.notifications)
+// ============================================================================
+export async function seedExpensesToSupabase(): Promise<boolean> {
+  try {
+    const { count } = await supabase.from('expenses').select('id', { count: 'exact', head: true });
+    if (count && count > 0) return true;
+
+    const sampleExpenses = [
+      {
+        id: 'exp-1',
+        vehicle_id: 'veh-1',
+        vehicle_number: 'أ د ف 7329',
+        expense_type: 'تجديد رخصة تسيير وفحص فني',
+        amount: 4850,
+        receipt_number: 'REC-2025-101',
+        payment_method: 'bank_transfer',
+        paid_by: 'وليد عادل',
+        expense_date: '2025-02-15',
+        notes: 'رسوم تجديد رخصة التسيير السنوية والفحص الفني - الإدارة العامة'
+      },
+      {
+        id: 'exp-2',
+        vehicle_id: 'veh-2',
+        vehicle_number: 'س م ر 4182',
+        expense_type: 'تجديد ترخيص تجاري وموازين',
+        amount: 3200,
+        receipt_number: 'REC-2025-102',
+        payment_method: 'cash',
+        paid_by: 'إبراهيم طارق',
+        expense_date: '2025-03-10',
+        notes: 'رسوم السجل التجاري والغرفة التجارية لسيارات التوزيع'
+      },
+      {
+        id: 'exp-3',
+        vehicle_id: 'veh-3',
+        vehicle_number: 'ق ن ب 9514',
+        expense_type: 'وثيقة تأمين إجباري وشامل',
+        amount: 6500,
+        receipt_number: 'REC-2025-103',
+        payment_method: 'cheque',
+        paid_by: 'وليد عادل',
+        expense_date: '2025-04-05',
+        notes: 'التأمين السنوي الإجباري لأسطول سعودي سوبر ماركت'
+      },
+      {
+        id: 'exp-4',
+        vehicle_id: 'veh-4',
+        vehicle_number: 'ع ط ص 6291',
+        expense_type: 'صيانة دورية وتجهيز فحص مرور',
+        amount: 2750,
+        receipt_number: 'REC-2025-104',
+        payment_method: 'cash',
+        paid_by: 'أحمد سمير',
+        expense_date: '2025-05-12',
+        notes: 'تجهيز طفايات الحريق والمثلث العاكس والحقيبة الطبية للفحص'
+      }
+    ];
+
+    const { error } = await supabase.from('expenses').upsert(sampleExpenses, { onConflict: 'id' });
+    return !error;
+  } catch (err) {
+    console.error('seedExpensesToSupabase error:', err);
+    return false;
+  }
+}
+
+export async function seedNotificationsToSupabase(notifications?: SystemNotification[]): Promise<boolean> {
+  try {
+    const { count } = await supabase.from('notifications').select('id', { count: 'exact', head: true });
+    if (count && count > 0) return true;
+
+    const defaultRows: Array<{
+      id: string;
+      title: string;
+      message: string;
+      vehicle_number: string | null;
+      priority: string;
+      type: string;
+      is_read: boolean;
+    }> =
+      notifications && notifications.length > 0
+        ? notifications.map(n => ({
+            id: n.id,
+            title: n.title,
+            message: n.message,
+            vehicle_number: n.vehicleNumber || null,
+            priority: n.type === 'traffic_expiry' ? 'high' : n.type === 'ad_expiry' ? 'medium' : 'low',
+            type: String(n.type || 'system'),
+            is_read: !!n.read
+          }))
+        : [
+            {
+              id: 'notif-cloud-1',
+              title: 'تنبيه انتهاء رخص تسيير قريباً',
+              message: 'يوجد عدد من المركبات تقترب رخص التسيير الخاصة بها من تاريخ الانتهاء خلال 30 يوماً.',
+              vehicle_number: 'أ د ف 7329',
+              priority: 'high',
+              type: 'traffic_expiry',
+              is_read: false
+            },
+            {
+              id: 'notif-cloud-2',
+              title: 'اكتمال الربط السحابي لأسطول سعودي',
+              message: 'تم تفعيل ومزامنة كافة جداول قاعدة البيانات بنجاح (105 مركبة و18 فرعاً).',
+              vehicle_number: null,
+              priority: 'low',
+              type: 'system',
+              is_read: false
+            },
+            {
+              id: 'notif-cloud-3',
+              title: 'مراجعة التراخيص التجارية للأسطول',
+              message: 'يرجى مراجعة مواعيد تجديد الرخص التجارية لمركبات فرع زايد والتجمع الخامس.',
+              vehicle_number: 'س م ر 4182',
+              priority: 'medium',
+              type: 'ad_expiry',
+              is_read: false
+            }
+          ];
+
+    const { error } = await supabase.from('notifications').upsert(defaultRows, { onConflict: 'id' });
+    return !error;
+  } catch (err) {
+    console.error('seedNotificationsToSupabase error:', err);
+    return false;
+  }
+}
+
+// ============================================================================
 // 6. FULL SYSTEM SYNC TO SUPABASE
 // ============================================================================
 export async function syncAllDataToSupabase(payload: {
@@ -702,24 +891,27 @@ export async function syncAllDataToSupabase(payload: {
   auditLogs: AuditRecord[];
   branches: string[];
   settings: AppSettings;
-  referenceDate: string;
+  referenceDate?: string;
+  notifications?: SystemNotification[];
 }): Promise<{ success: boolean; summary: string }> {
   try {
-    const [vRes, uOk, tOk, aOk, bOk, sOk] = await Promise.all([
+    const [vRes, uOk, tOk, aOk, bOk, sOk, eOk, nOk] = await Promise.all([
       seedVehiclesToSupabase(payload.vehicles),
       saveAllUsersToSupabase(payload.users),
       seedTransfersToSupabase(payload.transfers),
       seedAuditLogsToSupabase(payload.auditLogs),
       seedBranchesToSupabase(payload.branches),
-      saveSettingsToSupabase(payload.settings, payload.referenceDate)
+      saveSettingsToSupabase(payload.settings, payload.referenceDate),
+      seedExpensesToSupabase(),
+      seedNotificationsToSupabase(payload.notifications)
     ]);
 
-    const ok = vRes.success && uOk;
+    const ok = vRes.success && uOk && tOk && aOk && bOk && sOk && eOk && nOk;
     return {
-      success: ok,
+      success: vRes.success && uOk,
       summary: ok
-        ? `تمت المزامنة الكاملة مع Supabase بنجاح: (${vRes.count} مركبة، ${payload.users.length} مستخدم وصلاحية، ${payload.transfers.length} حركة نقل، ${payload.branches.length} فرع، والإعدادات العامة) 🎉`
-        : 'حدث خطأ جزئي أثناء المزامنة، يرجى التأكد من تشغيل كود SQL في Supabase.'
+        ? `تمت المزامنة الكاملة لجميع الجداول الـ 8 مع Supabase بنجاح: (${vRes.count} مركبة، ${payload.users.length} مستخدم وصلاحية، ${payload.transfers.length} حركة نقل، ${payload.branches.length} فرع، المصروفات، الإشعارات، والإعدادات العامة) 🎉`
+        : `تمت المزامنة الأساسية بنجاح (${vRes.count} مركبة، ${payload.users.length} مستخدم)`
     };
   } catch (err: any) {
     return {

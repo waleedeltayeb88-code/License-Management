@@ -216,12 +216,12 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
               </button>
             </div>
 
-            {/* Live Cloud Table Counters */}
+            {/* Live Cloud Table Counters (All 8 Tables) */}
             {status?.counts && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
                 <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/25 flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">المركبات بالـ Cloud</span>
+                    <span className="text-[10px] text-slate-400 block">1. جدول المركبات (vehicles)</span>
                     <span className="text-sm font-black text-emerald-400 font-mono">{status.counts.vehicles} مركبة</span>
                   </div>
                   <Car className="w-4 h-4 text-emerald-400/70" />
@@ -229,26 +229,58 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
 
                 <div className="p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/25 flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">المستخدمين بالـ Cloud</span>
+                    <span className="text-[10px] text-slate-400 block">2. المستخدمين (system_users)</span>
                     <span className="text-sm font-black text-amber-400 font-mono">{status.counts.users} حساب</span>
                   </div>
                   <Users className="w-4 h-4 text-amber-400/70" />
                 </div>
 
+                <div className="p-2.5 rounded-xl bg-cyan-950/30 border border-cyan-500/25 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">3. جدول الفروع (branches)</span>
+                    <span className="text-sm font-black text-cyan-300 font-mono">{status.counts.branches} فرع</span>
+                  </div>
+                  <Building2 className="w-4 h-4 text-cyan-400/70" />
+                </div>
+
                 <div className="p-2.5 rounded-xl bg-purple-950/30 border border-purple-500/25 flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">سجل النقل بالـ Cloud</span>
+                    <span className="text-[10px] text-slate-400 block">4. سجل النقل (transfers)</span>
                     <span className="text-sm font-black text-purple-300 font-mono">{status.counts.transfers} حركة</span>
                   </div>
                   <ArrowLeftRight className="w-4 h-4 text-purple-400/70" />
                 </div>
 
-                <div className="p-2.5 rounded-xl bg-cyan-950/30 border border-cyan-500/25 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-blue-950/30 border border-blue-500/25 flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">الفروع المسجلة</span>
-                    <span className="text-sm font-black text-cyan-300 font-mono">{status.counts.branches} فرع</span>
+                    <span className="text-[10px] text-slate-400 block">5. سجل التدقيق (audit_logs)</span>
+                    <span className="text-sm font-black text-blue-300 font-mono">{status.counts.auditLogs} سجل</span>
                   </div>
-                  <Building2 className="w-4 h-4 text-cyan-400/70" />
+                  <FileText className="w-4 h-4 text-blue-400/70" />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-teal-950/30 border border-teal-500/25 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">6. مصروفات الرخص (expenses)</span>
+                    <span className="text-sm font-black text-teal-300 font-mono">{status.counts.expenses} إيصال</span>
+                  </div>
+                  <CheckCircle2 className="w-4 h-4 text-teal-400/70" />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-indigo-950/30 border border-indigo-500/25 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">7. التنبيهات (notifications)</span>
+                    <span className="text-sm font-black text-indigo-300 font-mono">{status.counts.notifications} إشعار</span>
+                  </div>
+                  <ShieldCheck className="w-4 h-4 text-indigo-400/70" />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-800/70 border border-white/15 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">8. الإعدادات (settings)</span>
+                    <span className="text-sm font-black text-white font-mono">مفعل ✓</span>
+                  </div>
+                  <Server className="w-4 h-4 text-emerald-400/70" />
                 </div>
               </div>
             )}

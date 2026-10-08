@@ -20,7 +20,7 @@ export const INITIAL_USERS: SystemUser[] = [
   {
     id: 'user-fleet-1',
     username: 'fleet',
-    name: 'أحمد عثمان (مدير الأسطول)',
+    name: 'م. أحمد عثمان (مدير الأسطول)',
     email: 'fleet@seoudisupermarket.com',
     password: '123456',
     role: 'fleet_manager',
@@ -29,6 +29,20 @@ export const INITIAL_USERS: SystemUser[] = [
     createdAt: '2025-01-15',
     lastLogin: '2025-06-04 09:30',
     phone: '01000000001',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.fleet_manager }
+  },
+  {
+    id: 'user-fleet-2',
+    username: 'fleet_ops',
+    name: 'طارق عبد العزيز (مشرف التراخيص)',
+    email: 'tarek.fleet@seoudisupermarket.com',
+    password: '123456',
+    role: 'fleet_manager',
+    title: 'مشرف تشغيل وتجديد تراخيص الأسطول',
+    status: 'active',
+    createdAt: '2025-01-20',
+    lastLogin: '2025-06-04 09:00',
+    phone: '01000000004',
     permissions: { ...ROLE_DEFAULT_PERMISSIONS.fleet_manager }
   },
   {
@@ -44,6 +58,36 @@ export const INITIAL_USERS: SystemUser[] = [
     createdAt: '2025-02-01',
     lastLogin: '2025-06-03 14:20',
     phone: '01000000002',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.branch_manager }
+  },
+  {
+    id: 'user-branch-2',
+    username: 'hydepark',
+    name: 'كريم حسن (مدير فرع هايد بارك)',
+    email: 'hydepark.branch@seoudisupermarket.com',
+    password: '123456',
+    role: 'branch_manager',
+    title: 'مسؤول تشغيل فرع هايد بارك التجمع',
+    assignedBranch: 'هايد بارك (Hyde Park)',
+    status: 'active',
+    createdAt: '2025-02-05',
+    lastLogin: '2025-06-04 08:15',
+    phone: '01000000005',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.branch_manager }
+  },
+  {
+    id: 'user-branch-3',
+    username: 'maadi',
+    name: 'محمد الشناوي (مدير فرع المعادي)',
+    email: 'maadi.branch@seoudisupermarket.com',
+    password: '123456',
+    role: 'branch_manager',
+    title: 'مسؤول تشغيل دارك ستور المعادي',
+    assignedBranch: 'دارك ستور المعادي (DS Maadi)',
+    status: 'active',
+    createdAt: '2025-02-08',
+    lastLogin: '2025-06-03 18:40',
+    phone: '01000000006',
     permissions: { ...ROLE_DEFAULT_PERMISSIONS.branch_manager }
   },
   {
