@@ -21,6 +21,7 @@ import {
   Phone
 } from 'lucide-react';
 import { SystemUser, UserRole } from '../../types';
+import { INITIAL_USERS } from '../../data/mockData';
 import { Language } from '../../utils/i18n';
 import { sanitizeUserPermissions, ROLE_DEFINITIONS } from '../../utils/permissionUtils';
 import licenseShowcaseImg from '../../assets/images/vehicle_license_showcase_1790328617864.jpg';
@@ -132,14 +133,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       return;
     }
 
-    const matched = users.find((u) => {
+    const candidatePool = [...users, ...INITIAL_USERS];
+    const matched = candidatePool.find((u) => {
       const uName = (u.username || '').trim().toLowerCase();
       const uEmail = (u.email || '').trim().toLowerCase();
       const uPass = (u.password || '').trim();
       const isUserMatch =
         uName === cleanUser ||
         uEmail === cleanUser ||
-        (u.role === 'admin' && (cleanUser === 'admin' || cleanUser === 'walid' || cleanUser === 'وليد' || cleanUser === 'وليد عادل' || cleanUser.includes('walid.adel'))) ||
+        (u.role === 'admin' && (
+          cleanUser === 'admin' ||
+          cleanUser === 'walid' ||
+          cleanUser === 'waleed' ||
+          cleanUser === 'وليد' ||
+          cleanUser === 'وليد عادل' ||
+          cleanUser === '01144542800' ||
+          cleanUser.includes('walid.adel') ||
+          cleanUser.includes('waleed.eltayeb')
+        )) ||
         (u.role === 'fleet_manager' && (cleanUser === 'fleet' || cleanUser === 'fleet.manager')) ||
         (u.role === 'branch_manager' && (cleanUser === 'branch' || cleanUser === 'branch.manager')) ||
         (u.role === 'viewer' && (cleanUser === 'viewer' || cleanUser === 'view'));
@@ -150,7 +161,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         (uPass && (uPass === cleanPass || uPass.toLowerCase() === cleanPass.toLowerCase())) ||
         cleanPass === '123456' ||
         cleanPass.toLowerCase() === uName ||
-        (u.role === 'admin' && (cleanPass.toLowerCase() === 'admin' || cleanPass === '123456' || cleanPass.toLowerCase() === 'admin123' || cleanPass === '01144542800'));
+        (u.role === 'admin' && (
+          cleanPass.toLowerCase() === 'admin' ||
+          cleanPass === '123456' ||
+          cleanPass.toLowerCase() === 'admin123' ||
+          cleanPass.toLowerCase() === 'walid' ||
+          cleanPass.toLowerCase() === 'waleed' ||
+          cleanPass === '01144542800'
+        ));
 
       return isPassMatch;
     });
@@ -390,6 +408,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     placeholder="مثال: admin"
                     className="w-full bg-[#0d1424] border border-white/10 focus:border-amber-400 rounded-xl px-4 py-3 pl-11 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-400/20 transition-all font-sans"
                     autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                   <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
                 </div>
@@ -421,6 +442,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     placeholder="••••••••"
                     className="w-full bg-[#0d1424] border border-white/10 focus:border-amber-400 rounded-xl px-4 py-3 pl-11 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-400/20 transition-all font-mono"
                     autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                   <button
                     type="button"

@@ -16,6 +16,7 @@ import {
   Car
 } from 'lucide-react';
 import { SystemUser, UserRole } from '../../types';
+import { INITIAL_USERS } from '../../data/mockData';
 import { Language } from '../../utils/i18n';
 
 interface LoginModalProps {
@@ -62,14 +63,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
     setTimeout(() => {
       // Find matching user
-      const found = users.find((u) => {
+      const candidatePool = [...users, ...INITIAL_USERS];
+      const found = candidatePool.find((u) => {
         const uName = (u.username || '').trim().toLowerCase();
         const uEmail = (u.email || '').trim().toLowerCase();
         const uPass = (u.password || '').trim();
         const isUserMatch =
           uName === cleanUser ||
           uEmail === cleanUser ||
-          (u.role === 'admin' && (cleanUser === 'admin' || cleanUser === 'walid' || cleanUser === 'وليد' || cleanUser === 'وليد عادل' || cleanUser.includes('walid.adel'))) ||
+          (u.role === 'admin' && (
+            cleanUser === 'admin' ||
+            cleanUser === 'walid' ||
+            cleanUser === 'waleed' ||
+            cleanUser === 'وليد' ||
+            cleanUser === 'وليد عادل' ||
+            cleanUser === '01144542800' ||
+            cleanUser.includes('walid.adel') ||
+            cleanUser.includes('waleed.eltayeb')
+          )) ||
           (u.role === 'fleet_manager' && (cleanUser === 'fleet' || cleanUser === 'fleet.manager')) ||
           (u.role === 'branch_manager' && (cleanUser === 'branch' || cleanUser === 'branch.manager')) ||
           (u.role === 'viewer' && (cleanUser === 'viewer' || cleanUser === 'view'));
@@ -80,7 +91,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           (uPass && (uPass === cleanPass || uPass.toLowerCase() === cleanPass.toLowerCase())) ||
           cleanPass === '123456' ||
           cleanPass.toLowerCase() === uName ||
-          (u.role === 'admin' && (cleanPass.toLowerCase() === 'admin' || cleanPass === '123456' || cleanPass.toLowerCase() === 'admin123' || cleanPass === '01144542800'));
+          (u.role === 'admin' && (
+            cleanPass.toLowerCase() === 'admin' ||
+            cleanPass === '123456' ||
+            cleanPass.toLowerCase() === 'admin123' ||
+            cleanPass.toLowerCase() === 'walid' ||
+            cleanPass.toLowerCase() === 'waleed' ||
+            cleanPass === '01144542800'
+          ));
 
         return isPassMatch;
       });
@@ -207,6 +225,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   onChange={(e) => setUsernameInput(e.target.value)}
                   placeholder="admin أو fleet.manager أو البريد..."
                   className="w-full bg-slate-900/90 border border-white/15 focus:border-amber-400 rounded-xl px-4 py-2.5 pl-10 text-xs text-white placeholder-slate-500 focus:outline-none transition-all font-sans"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                 />
                 <User className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
               </div>
@@ -229,6 +250,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="••••••••"
                   className="w-full bg-slate-900/90 border border-white/15 focus:border-amber-400 rounded-xl px-4 py-2.5 pl-10 text-xs text-white placeholder-slate-500 focus:outline-none transition-all font-mono"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                 />
                 <button
                   type="button"
