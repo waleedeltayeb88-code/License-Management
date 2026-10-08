@@ -34,6 +34,8 @@ interface BottomNavProps {
   onSelectTab: (tab: BottomNavTab) => void;
   counts?: NavCounts;
   isAdmin?: boolean;
+  canManageSettings?: boolean;
+  canExportReports?: boolean;
   onOpenUserManagement?: () => void;
 }
 
@@ -43,11 +45,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onSelectTab,
   counts = {} as NavCounts,
   isAdmin = false,
+  canManageSettings = false,
+  canExportReports = true,
   onOpenUserManagement,
 }) => {
   const isAr = lang === 'ar';
 
-  const navItems = [
+  const allNavItems = [
     {
       id: 'dashboard' as BottomNavTab,
       title: isAr ? 'لوحة التحكم' : 'Dashboard',
@@ -56,15 +60,17 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       badgeText: isAr ? 'مباشر' : 'Live',
       badgeType: 'live' as const,
       color: 'emerald',
+      visible: true,
     },
     {
       id: 'vehicles_list' as BottomNavTab,
-      title: isAr ? 'أسطول السيارات' : 'Fleet Fleet',
+      title: isAr ? 'أسطول السيارات' : 'Fleet',
       subtitle: isAr ? 'المركبات والفروع' : 'Vehicles & Branches',
       icon: Car,
       badgeText: `${counts.totalVehicles ?? 24} ${isAr ? 'مركبة' : 'cars'}`,
       badgeType: 'neutral' as const,
       color: 'cyan',
+      visible: true,
     },
     {
       id: 'all_licenses' as BottomNavTab,
@@ -76,6 +82,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         : (isAr ? 'مطابق' : 'Compliant'),
       badgeType: counts.expiringLicenses && counts.expiringLicenses > 0 ? 'warning' as const : 'success' as const,
       color: 'amber',
+      visible: true,
     },
     {
       id: 'reports' as BottomNavTab,
@@ -85,6 +92,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       badgeText: 'XLSX / PDF',
       badgeType: 'neutral' as const,
       color: 'indigo',
+      visible: canExportReports,
     },
     {
       id: 'transfers' as BottomNavTab,
@@ -94,6 +102,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       badgeText: `${counts.transfersCount ?? 0} ${isAr ? 'حركات' : 'moves'}`,
       badgeType: 'neutral' as const,
       color: 'purple',
+      visible: true,
     },
     {
       id: 'settings' as BottomNavTab,
@@ -103,15 +112,27 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       badgeText: isAr ? 'تحكم' : 'Config',
       badgeType: 'neutral' as const,
       color: 'slate',
+      visible: canManageSettings,
     },
   ];
+
+  const navItems = allNavItems.filter(item => item.visible);
+  const totalCols = navItems.length + (isAdmin ? 1 : 0);
+  const lgColsClass =
+    totalCols >= 7
+      ? 'lg:grid-cols-7'
+      : totalCols === 6
+      ? 'lg:grid-cols-6'
+      : totalCols === 5
+      ? 'lg:grid-cols-5'
+      : 'lg:grid-cols-4';
 
   return (
     <nav 
       aria-label="Executive Navigation Bar" 
       className="sticky top-2 z-40 mb-4 rounded-2xl bg-[#070b15]/95 backdrop-blur-2xl border border-white/10 p-1.5 sm:p-2 shadow-[0_12px_45px_rgba(0,0,0,0.65)] ring-1 ring-white/5"
     >
-      <div className={`grid grid-cols-2 sm:grid-cols-3 ${isAdmin ? 'lg:grid-cols-7' : 'lg:grid-cols-6'} gap-1.5 sm:gap-2`}>
+      <div className={`grid grid-cols-2 sm:grid-cols-3 ${lgColsClass} gap-1.5 sm:gap-2`}>
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;

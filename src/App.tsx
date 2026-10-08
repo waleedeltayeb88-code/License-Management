@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Vehicle, 
   FilterState, 
@@ -20,9 +20,8 @@ import {
 } from './data/mockData';
 import { getLicenseStatus, DEFAULT_REPORT_DATE } from './utils/dateUtils';
 import { Language } from './utils/i18n';
-import { exportVehiclesToExcel } from './utils/exportUtils';
-import { getUserPermissions } from './utils/permissionUtils';
-import { Car, FileText, Plus, ArrowLeftRight, Users, ShieldCheck, Crown } from 'lucide-react';
+import { getUserPermissions, sanitizeUserPermissions, ROLE_DEFINITIONS } from './utils/permissionUtils';
+import { Car, FileText, Plus, ArrowLeftRight, ShieldCheck, Crown, Eye, Building2, Truck, CheckCircle2, Cloud } from 'lucide-react';
 
 // Master Components
 import { Header } from './components/Header';
@@ -46,14 +45,60 @@ import { LoginModal } from './components/modals/LoginModal';
 import { UserManagementModal } from './components/modals/UserManagementModal';
 import { SupabaseModal } from './components/SupabaseModal';
 import { 
+  supabase,
   fetchVehiclesFromSupabase, 
   saveVehicleToSupabase, 
+  seedVehiclesToSupabase,
+  deleteVehicleFromSupabase,
+  fetchUsersFromSupabase,
+  saveUserToSupabase,
+  saveAllUsersToSupabase,
+  fetchTransfersFromSupabase,
   saveTransferToSupabase, 
-  deleteVehicleFromSupabase 
+  seedTransfersToSupabase,
+  fetchAuditLogsFromSupabase,
+  saveAuditToSupabase,
+  seedAuditLogsToSupabase,
+  fetchSettingsFromSupabase,
+  saveSettingsToSupabase,
+  seedBranchesToSupabase
 } from './lib/supabase';
 
+function mergeAndSanitizeUsers(list: SystemUser[]): SystemUser[] {
+  const map = new Map<string, SystemUser>();
+  // Ensure default 4 role accounts exist so user can always test every role
+  for (const defUser of INITIAL_USERS) {
+    map.set(defUser.username.toLowerCase(), {
+      ...defUser,
+      permissions: sanitizeUserPermissions(defUser.role, defUser.permissions),
+    });
+  }
+  for (const u of list) {
+    if (!u || !u.username) continue;
+    const key = u.username.toLowerCase();
+    const cleanRole: UserRole =
+      u.role === 'admin' || u.role === 'fleet_manager' || u.role === 'branch_manager' || u.role === 'viewer'
+        ? u.role
+        : 'viewer';
+    const sanitized: SystemUser = {
+      ...u,
+      role: cleanRole,
+      permissions: sanitizeUserPermissions(cleanRole, u.permissions),
+    };
+    if (key === 'admin') {
+      sanitized.name = sanitized.name || 'وليد عادل';
+      sanitized.email = sanitized.email || 'Walid.Adel@Seoudisupermarket.com';
+      sanitized.phone = sanitized.phone || '01144542800';
+      sanitized.role = 'admin';
+      sanitized.permissions = sanitizeUserPermissions('admin', sanitized.permissions);
+    }
+    map.set(key, sanitized);
+  }
+  return Array.from(map.values());
+}
+
 export default function App() {
-  const [lang, setLang] = useState<Language>('ar');
+  const [lang] = useState<Language>('ar');
 
   // Sync HTML lang and dir for RTL
   useEffect(() => {
@@ -67,117 +112,203 @@ export default function App() {
   const [referenceDate, setReferenceDate] = useState<string>(() => DEFAULT_REPORT_DATE);
   const [lastUpdate, setLastUpdate] = useState<string>('10:30 ص');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [userRole, setUserRole] = useState<UserRole>('admin');
+  const [cloudStatus, setCloudStatus] = useState<'connected' | 'syncing' | 'error'>('connected');
+  const [cloudToast, setCloudToast] = useState<string | null>(null);
 
-  // User Authentication & Management State (Initialized with Admin only as requested)
+  const showCloudNotification = useCallback((msg: string) => {
+    setCloudToast(msg);
+    setTimeout(() => {
+      setCloudToast(prev => (prev === msg ? null : prev));
+    }, 3200);
+  }, []);
+
+  // User Authentication & Management State
   const [users, setUsers] = useState<SystemUser[]>(() => {
-    const saved = localStorage.getItem('seoudi_fleet_users_v3');
+    const saved = localStorage.getItem('seoudi_fleet_users_v4');
     if (saved) {
       try { 
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Guarantee that branch_manager users do not retain vehicle transfer rights from previous state
-          return parsed.map((u: SystemUser) => {
-            if (u.role === 'branch_manager' && u.permissions?.canTransferVehicles) {
-              return {
-                ...u,
-                permissions: { ...u.permissions, canTransferVehicles: false },
-              };
-            }
-            return u;
-          });
+          return mergeAndSanitizeUsers(parsed);
         }
       } catch (e) {}
     }
-    // Clean up older cached demo users
-    try {
-      localStorage.removeItem('seoudi_fleet_users');
-    } catch (e) {}
-    return INITIAL_USERS;
+    return mergeAndSanitizeUsers(INITIAL_USERS);
   });
 
   // Default to null so landing page is the website's initial starting page
   const [currentUser, setCurrentUser] = useState<SystemUser | null>(() => {
-    const saved = localStorage.getItem('seoudi_fleet_current_user');
+    const saved = localStorage.getItem('seoudi_fleet_current_user_v4');
     if (saved) {
       try { 
         const parsed = JSON.parse(saved);
-        if (parsed.username === 'admin') {
-          parsed.name = 'وليد عادل';
-          parsed.email = 'Walid.Adel@Seoudisupermarket.com';
-          parsed.phone = '01144542800';
-        }
-        if (parsed.role === 'branch_manager' && parsed.permissions?.canTransferVehicles) {
+        if (parsed && parsed.role) {
           return {
             ...parsed,
-            permissions: { ...parsed.permissions, canTransferVehicles: false },
+            permissions: sanitizeUserPermissions(parsed.role, parsed.permissions),
           };
         }
-        return parsed;
       } catch (e) {}
     }
     return null;
   });
 
+  const [userRole, setUserRole] = useState<UserRole>(() => currentUser?.role || 'viewer');
+
+  // Effective permissions based on currentUser AND active/simulated userRole
   const currentUserPermissions = useMemo(() => {
     return getUserPermissions(currentUser, userRole);
   }, [currentUser, userRole]);
 
+  const canUserAdd = currentUserPermissions.canAddVehicles;
+  const canUserEdit = currentUserPermissions.canEditLicenses;
   const canUserTransfer = currentUserPermissions.canTransferVehicles;
+  const canUserExport = currentUserPermissions.canExportReports;
+  const canUserManageUsers = currentUserPermissions.canManageUsers && userRole === 'admin';
+  const canUserManageSettings = currentUserPermissions.canManageSettings;
+  const canUserDelete = !!currentUserPermissions.canDeleteRecords;
 
-  const [isLandingView, setIsLandingView] = useState<boolean>(true);
+  const [isLandingView, setIsLandingView] = useState<boolean>(() => !currentUser);
   const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
   const [isUserManagementOpen, setIsUserManagementOpen] = useState<boolean>(false);
 
+  // Bottom Navigation Active Tab
+  const [bottomTab, setBottomTab] = useState<BottomNavTab>('dashboard');
+
+  // Redirect away from restricted tabs when role changes
+  useEffect(() => {
+    if (bottomTab === 'settings' && !canUserManageSettings) {
+      setBottomTab('dashboard');
+    }
+    if (bottomTab === 'reports' && !canUserExport) {
+      setBottomTab('dashboard');
+    }
+  }, [bottomTab, canUserManageSettings, canUserExport]);
+
   useEffect(() => {
     try {
-      localStorage.setItem('seoudi_fleet_users_v3', JSON.stringify(users));
+      localStorage.setItem('seoudi_fleet_users_v4', JSON.stringify(users));
     } catch (e) {}
   }, [users]);
 
   useEffect(() => {
     if (currentUser) {
       try {
-        localStorage.setItem('seoudi_fleet_current_user', JSON.stringify(currentUser));
+        localStorage.setItem('seoudi_fleet_current_user_v4', JSON.stringify(currentUser));
       } catch (e) {}
-      setUserRole(currentUser.role);
     } else {
       try {
-        localStorage.removeItem('seoudi_fleet_current_user');
+        localStorage.removeItem('seoudi_fleet_current_user_v4');
       } catch (e) {}
     }
   }, [currentUser]);
 
-  const handleQuickLogin = (role: UserRole) => {
-    const target = users.find(u => u.role === role);
-    if (target) {
-      setCurrentUser(target);
-      setUserRole(target.role);
-      setIsLandingView(false);
-      setIsLoginOpen(false);
-    }
-  };
-
   const handleLogin = (user: SystemUser) => {
-    setCurrentUser(user);
-    setUserRole(user.role);
+    // Look up latest user state from `users` list and sanitize permissions
+    const latestFromList = users.find(
+      u => u.id === user.id || u.username.toLowerCase() === user.username.toLowerCase()
+    ) || user;
+
+    const cleanUser: SystemUser = {
+      ...latestFromList,
+      lastLogin: new Date().toISOString().slice(0, 16).replace('T', ' '),
+      permissions: sanitizeUserPermissions(latestFromList.role, latestFromList.permissions),
+    };
+
+    setCurrentUser(cleanUser);
+    setUserRole(cleanUser.role);
     setIsLandingView(false);
     setIsLoginOpen(false);
+
+    // If user is a branch manager with an assigned branch, pre-filter by their branch
+    if (cleanUser.role === 'branch_manager' && cleanUser.assignedBranch) {
+      setFilters(prev => ({ ...prev, branch: cleanUser.assignedBranch || 'all' }));
+    } else {
+      setFilters(prev => ({ ...prev, branch: 'all' }));
+    }
+
+    // Update user last_login in Supabase
+    saveUserToSupabase(cleanUser);
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
+    setUserRole('viewer');
     setIsLandingView(true);
   };
 
-  // Primary Data State
-  const [vehicles, setVehicles] = useState<Vehicle[]>(initialVehicles);
-  const [transfers, setTransfers] = useState<TransferRecord[]>(initialTransfers);
-  const [auditLogs, setAuditLogs] = useState<AuditRecord[]>(initialAuditLogs);
-  const [notifications, setNotifications] = useState<SystemNotification[]>(initialNotifications);
+  const handleUpdateUsers = async (updatedList: SystemUser[]) => {
+    const sanitizedList = mergeAndSanitizeUsers(updatedList);
+    setUsers(sanitizedList);
 
-  // Bottom Navigation Active Tab
-  const [bottomTab, setBottomTab] = useState<BottomNavTab>('dashboard');
+    // If currentUser was updated in the list, sync currentUser & userRole immediately
+    if (currentUser) {
+      const updatedSelf = sanitizedList.find(u => u.id === currentUser.id);
+      if (updatedSelf) {
+        setCurrentUser(updatedSelf);
+        setUserRole(updatedSelf.role);
+      }
+    }
+
+    // Save to Supabase Cloud
+    setCloudStatus('syncing');
+    const ok = await saveAllUsersToSupabase(sanitizedList);
+    setCloudStatus(ok ? 'connected' : 'error');
+    if (ok) {
+      showCloudNotification('تم حفظ وتحديث قائمة المستخدمين والصلاحيات في سحابة Supabase ✓');
+    }
+  };
+
+  // Primary Data State (with local cache fallback for instant multi-device responsiveness)
+  const [vehicles, setVehicles] = useState<Vehicle[]>(() => {
+    try {
+      const cached = localStorage.getItem('seoudi_fleet_vehicles_v4');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return initialVehicles;
+  });
+  const [transfers, setTransfers] = useState<TransferRecord[]>(() => {
+    try {
+      const cached = localStorage.getItem('seoudi_fleet_transfers_v4');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return initialTransfers;
+  });
+  const [auditLogs, setAuditLogs] = useState<AuditRecord[]>(() => {
+    try {
+      const cached = localStorage.getItem('seoudi_fleet_audits_v4');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return initialAuditLogs;
+  });
+  const [notifications] = useState<SystemNotification[]>(initialNotifications);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('seoudi_fleet_vehicles_v4', JSON.stringify(vehicles));
+    } catch {}
+  }, [vehicles]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('seoudi_fleet_transfers_v4', JSON.stringify(transfers));
+    } catch {}
+  }, [transfers]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('seoudi_fleet_audits_v4', JSON.stringify(auditLogs));
+    } catch {}
+  }, [auditLogs]);
 
   // Modals Open State
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -188,24 +319,106 @@ export default function App() {
   const [isSupabaseOpen, setIsSupabaseOpen] = useState(false);
   const [activeVehicle, setActiveVehicle] = useState<Vehicle | null>(null);
 
-  // Auto-fetch data from Supabase on mount if available
-  useEffect(() => {
-    let isMounted = true;
-    async function loadCloudVehicles() {
-      try {
-        const cloudVehicles = await fetchVehiclesFromSupabase();
-        if (isMounted && cloudVehicles && cloudVehicles.length > 0) {
+  // Load all data from Supabase on mount + auto-seed empty tables + subscribe to Realtime changes
+  const loadAllFromSupabase = useCallback(async () => {
+    setCloudStatus('syncing');
+    try {
+      const [cloudVehicles, cloudUsers, cloudTransfers, cloudAudits, cloudSettings] = await Promise.all([
+        fetchVehiclesFromSupabase(),
+        fetchUsersFromSupabase(),
+        fetchTransfersFromSupabase(),
+        fetchAuditLogsFromSupabase(),
+        fetchSettingsFromSupabase()
+      ]);
+
+      if (cloudVehicles !== null) {
+        if (cloudVehicles.length > 0) {
           setVehicles(cloudVehicles);
+        } else {
+          // Table exists in Supabase but is empty — auto-seed initial Fleet Vehicles & Branches
+          await Promise.all([
+            seedVehiclesToSupabase(initialVehicles),
+            seedBranchesToSupabase(BRANCHES)
+          ]);
         }
-      } catch (err) {
-        console.error('Supabase load error:', err);
       }
+
+      if (cloudUsers !== null) {
+        if (cloudUsers.length > 0) {
+          const merged = mergeAndSanitizeUsers(cloudUsers);
+          setUsers(merged);
+          setCurrentUser(prev => {
+            if (!prev) return null;
+            const found = merged.find(u => u.id === prev.id || u.username.toLowerCase() === prev.username.toLowerCase());
+            if (found) {
+              return found;
+            }
+            return prev;
+          });
+        } else {
+          // Seed initial users to Supabase if table is empty
+          await saveAllUsersToSupabase(mergeAndSanitizeUsers(INITIAL_USERS));
+        }
+      }
+
+      if (cloudTransfers !== null) {
+        if (cloudTransfers.length > 0) {
+          setTransfers(cloudTransfers);
+        } else {
+          await seedTransfersToSupabase(initialTransfers);
+        }
+      }
+
+      if (cloudAudits !== null) {
+        if (cloudAudits.length > 0) {
+          setAuditLogs(cloudAudits);
+        } else {
+          await seedAuditLogsToSupabase(initialAuditLogs);
+        }
+      }
+
+      if (cloudSettings?.settings) {
+        setSettings(cloudSettings.settings);
+        if (cloudSettings.settings.expiringDaysThreshold) {
+          setThresholdDays(cloudSettings.settings.expiringDaysThreshold);
+        }
+        if (cloudSettings.referenceDate) {
+          setReferenceDate(cloudSettings.referenceDate);
+        }
+      }
+
+      setLastUpdate(new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }));
+      setCloudStatus('connected');
+    } catch (err) {
+      console.error('Supabase load error:', err);
+      setCloudStatus('error');
     }
-    loadCloudVehicles();
-    return () => {
-      isMounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    loadAllFromSupabase();
+
+    // Auto-sync when switching back to the tab/app on any device + periodic background HTTP sync
+    const handleFocusSync = () => {
+      if (document.visibilityState === 'visible') {
+        loadAllFromSupabase();
+      }
+    };
+    window.addEventListener('focus', handleFocusSync);
+    document.addEventListener('visibilitychange', handleFocusSync);
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadAllFromSupabase();
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocusSync);
+      document.removeEventListener('visibilitychange', handleFocusSync);
+      window.clearInterval(intervalId);
+    };
+  }, [loadAllFromSupabase]);
 
   // Global Search & Filters State
   const [filters, setFilters] = useState<FilterState>({
@@ -240,7 +453,6 @@ export default function App() {
       else if (cStat === 'expiring_soon') cExpiring++;
       else if (cStat === 'expired') cExpired++;
 
-      // Vehicle where BOTH traffic AND commercial licenses are strictly valid (> threshold days)
       if (tStat === 'valid' && cStat === 'valid') {
         fullyCompliantCount++;
       }
@@ -292,7 +504,6 @@ export default function App() {
     const query = filters.search.trim().toLowerCase();
 
     return (vehicles || []).filter((v) => {
-      // 1. Text Search query matching plate, model, branch, licenses, notes
       if (query) {
         const matchPlateNum = (v.vehicleNumber || '').toLowerCase().includes(query);
         const matchPlateLetters = (v.plateLetters || '').toLowerCase().includes(query);
@@ -308,17 +519,14 @@ export default function App() {
         }
       }
 
-      // 2. Branch filter
       if (filters.branch !== 'all' && v.branch !== filters.branch) {
         return false;
       }
 
-      // 3. Model filter
       if (filters.model && filters.model !== 'all' && v.model !== filters.model) {
         return false;
       }
 
-      // 4. Status filter
       const tStat = getLicenseStatus(v.trafficLicense.expiryDate, thresholdDays, referenceDate);
       const cStat = getLicenseStatus(v.commercialLicense.expiryDate, thresholdDays, referenceDate);
 
@@ -328,12 +536,9 @@ export default function App() {
         } else if (filters.licenseType === 'commercial') {
           if (cStat !== filters.status) return false;
         } else {
-          // Both licenses active together ('all')
           if (filters.status === 'valid') {
-            // Fully compliant: both traffic AND commercial must be valid
             if (tStat !== 'valid' || cStat !== 'valid') return false;
           } else {
-            // For expiring_soon or expired: vehicle qualifies if EITHER license is expiring_soon / expired
             if (tStat !== filters.status && cStat !== filters.status) return false;
           }
         }
@@ -346,37 +551,112 @@ export default function App() {
   // Handlers
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    try {
-      const cloudVehicles = await fetchVehiclesFromSupabase();
-      if (cloudVehicles && cloudVehicles.length > 0) {
-        setVehicles(cloudVehicles);
-      }
-    } catch (e) {
-      console.error('Refresh error:', e);
-    }
-    setLastUpdate(new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }));
+    await loadAllFromSupabase();
     setIsRefreshing(false);
+    showCloudNotification('تم تحديث كافة البيانات من قاعدة بيانات Supabase ✓');
   };
 
-  const handleAddVehicle = (newV: Omit<Vehicle, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const handleAddVehicle = async (newV: Omit<Vehicle, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!canUserAdd) {
+      showCloudNotification('عفواً، حسابك الحالي لا يملك صلاحية إضافة مركبات جديدة.');
+      return;
+    }
     const created: Vehicle = {
       ...newV,
       id: `v-${newV.vehicleNumber}-${Date.now().toString().slice(-4)}`,
       createdAt: referenceDate,
       updatedAt: referenceDate,
     };
-    setVehicles([created, ...vehicles]);
-    // Save to Supabase cloud
-    saveVehicleToSupabase(created);
+    setVehicles(prev => [created, ...prev]);
+
+    const audit: AuditRecord = {
+      id: `aud-${Date.now()}`,
+      user: currentUser?.name || 'مسؤول النظام',
+      userRole: userRole,
+      action: 'إضافة سيارة جديدة للأسطول',
+      vehicleNumber: `${created.plateLetters || ''} ${created.vehicleNumber}`.trim(),
+      oldValue: 'غير مسجلة',
+      newValue: `فرع: ${created.branch} | انتهاء المرور: ${created.trafficLicense.expiryDate}`,
+      date: new Date().toISOString().slice(0, 10),
+      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    };
+    setAuditLogs(prev => [audit, ...prev]);
+
+    setCloudStatus('syncing');
+    const [ok] = await Promise.all([
+      saveVehicleToSupabase(created),
+      saveAuditToSupabase(audit)
+    ]);
+    setCloudStatus(ok ? 'connected' : 'error');
+    if (ok) {
+      showCloudNotification(`تم حفظ السيارة رقم (${created.vehicleNumber}) في Supabase بنجاح ✓`);
+    }
   };
 
-  const handleUpdateVehicle = (updatedV: Vehicle) => {
-    setVehicles(vehicles.map((v) => (v.id === updatedV.id ? updatedV : v)));
-    // Save to Supabase cloud
-    saveVehicleToSupabase(updatedV);
+  const handleUpdateVehicle = async (updatedV: Vehicle) => {
+    if (!canUserEdit) {
+      showCloudNotification('عفواً، حساب المشاهد (Viewer) مخصص للقراءة والاطلاع فقط ولا يملك صلاحية التعديل.');
+      return;
+    }
+    const oldVehicle = vehicles.find(v => v.id === updatedV.id);
+    setVehicles(prev => prev.map((v) => (v.id === updatedV.id ? updatedV : v)));
+
+    const audit: AuditRecord = {
+      id: `aud-${Date.now()}`,
+      user: currentUser?.name || 'مسؤول النظام',
+      userRole: userRole,
+      action: 'تحديث بيانات ورخص مركبة',
+      vehicleNumber: `${updatedV.plateLetters || ''} ${updatedV.vehicleNumber}`.trim(),
+      oldValue: oldVehicle ? `مرور: ${oldVehicle.trafficLicense.expiryDate} | إعلان: ${oldVehicle.commercialLicense.expiryDate}` : '—',
+      newValue: `مرور: ${updatedV.trafficLicense.expiryDate} | إعلان: ${updatedV.commercialLicense.expiryDate}`,
+      date: new Date().toISOString().slice(0, 10),
+      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+    };
+    setAuditLogs(prev => [audit, ...prev]);
+
+    setCloudStatus('syncing');
+    const [ok] = await Promise.all([
+      saveVehicleToSupabase(updatedV),
+      saveAuditToSupabase(audit)
+    ]);
+    setCloudStatus(ok ? 'connected' : 'error');
+    if (ok) {
+      showCloudNotification(`تم تحديث رخص السيارة (${updatedV.vehicleNumber}) في Supabase ✓`);
+    }
   };
 
-  const handleTransferVehicle = (
+  const handleDeleteVehicle = async (vehicleId: string) => {
+    if (!canUserDelete) {
+      showCloudNotification('عفواً، صلاحية حذف المركبات مقتصرة على مدير النظام فقط.');
+      return;
+    }
+    const target = vehicles.find(v => v.id === vehicleId);
+    setVehicles(prev => prev.filter(v => v.id !== vehicleId));
+
+    setCloudStatus('syncing');
+    const ok = await deleteVehicleFromSupabase(vehicleId);
+    if (target) {
+      const audit: AuditRecord = {
+        id: `aud-${Date.now()}`,
+        user: currentUser?.name || 'مدير النظام',
+        userRole: userRole,
+        action: 'حذف مركبة من الأسطول',
+        vehicleNumber: `${target.plateLetters || ''} ${target.vehicleNumber}`.trim(),
+        oldValue: target.branch,
+        newValue: 'تم الحذف نهائياً',
+        date: new Date().toISOString().slice(0, 10),
+        time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+      };
+      setAuditLogs(prev => [audit, ...prev]);
+      await saveAuditToSupabase(audit);
+    }
+    setCloudStatus(ok ? 'connected' : 'error');
+    if (ok) {
+      showCloudNotification('تم حذف المركبة من قاعدة بيانات Supabase ✓');
+    }
+  };
+
+  const handleTransferVehicle = async (
     vehicleId: string,
     fromBranch: string,
     toBranch: string,
@@ -385,35 +665,57 @@ export default function App() {
     date: string
   ) => {
     if (!canUserTransfer) {
-      alert(
-        lang === 'ar'
-          ? 'عفواً، تم حجب صلاحية نقل المركبات بين الفروع عن مدير الفرع (مقتصرة على مدير الأسطول والمدير العام فقط).'
-          : 'Transferring vehicles is restricted to Fleet Managers and Administrators.'
-      );
+      showCloudNotification('عفواً، صلاحية نقل المركبات بين الفروع مقتصرة على مدير الأسطول والمدير العام فقط.');
       return;
     }
     const target = vehicles.find((v) => v.id === vehicleId);
+    let updatedVehicle: Vehicle | null = null;
     if (target) {
-      const updatedVehicle = { ...target, branch: toBranch };
-      setVehicles(vehicles.map((v) => (v.id === vehicleId ? updatedVehicle : v)));
-      // Save update to Supabase
-      saveVehicleToSupabase(updatedVehicle);
+      updatedVehicle = { ...target, branch: toBranch, updatedAt: new Date().toISOString().slice(0, 10) };
+      setVehicles(prev => prev.map((v) => (v.id === vehicleId && updatedVehicle ? updatedVehicle : v)));
     }
+    const nowTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const record: TransferRecord = {
       id: `tr-${Date.now()}`,
       vehicleId,
-      vehicleNumber: vehicles.find((v) => v.id === vehicleId)?.vehicleNumber || '',
+      vehicleNumber: target?.vehicleNumber || '',
       fromBranch,
       toBranch,
       date,
-      time: '10:30 ص',
+      time: nowTime,
       transferredBy: currentUser?.name || 'مدير عمليات سعودي',
       reason,
       notes,
     };
-    setTransfers([record, ...transfers]);
-    // Save transfer log to Supabase
-    saveTransferToSupabase(record);
+    setTransfers(prev => [record, ...prev]);
+
+    const audit: AuditRecord = {
+      id: `aud-${Date.now()}`,
+      user: currentUser?.name || 'مدير عمليات سعودي',
+      userRole: userRole,
+      action: 'نقل سيارة بين الفروع',
+      vehicleNumber: target?.vehicleNumber || '',
+      oldValue: fromBranch,
+      newValue: toBranch,
+      date,
+      time: nowTime
+    };
+    setAuditLogs(prev => [audit, ...prev]);
+
+    setCloudStatus('syncing');
+    const promises: Promise<boolean>[] = [
+      saveTransferToSupabase(record),
+      saveAuditToSupabase(audit)
+    ];
+    if (updatedVehicle) {
+      promises.push(saveVehicleToSupabase(updatedVehicle));
+    }
+    const results = await Promise.all(promises);
+    const ok = results.every(Boolean);
+    setCloudStatus(ok ? 'connected' : 'error');
+    if (ok) {
+      showCloudNotification(`تم تسجيل نقل السيارة (${target?.vehicleNumber || ''}) إلى ${toBranch} في Supabase ✓`);
+    }
   };
 
   if (!currentUser || isLandingView) {
@@ -431,15 +733,29 @@ export default function App() {
     );
   }
 
+  const activeRoleMeta = ROLE_DEFINITIONS[userRole] || ROLE_DEFINITIONS.viewer;
+  const isSimulatingRole = currentUser.role === 'admin' && userRole !== 'admin';
+
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-100 antialiased font-sans flex flex-col justify-between p-2.5 sm:p-4 selection:bg-amber-500/30 selection:text-amber-200">
+      {/* Live Cloud Toast Notification */}
+      {cloudToast && (
+        <div className="fixed bottom-5 left-5 z-50 flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-emerald-950/95 border border-emerald-400/50 text-emerald-200 text-xs font-bold shadow-[0_10px_40px_rgba(0,0,0,0.8)] animate-in fade-in slide-in-from-bottom-3">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{cloudToast}</span>
+        </div>
+      )}
+
       <div className="w-full max-w-[1780px] mx-auto flex-1 flex flex-col">
         {/* 1. TOP HEADER */}
         <Header
           lang={lang}
           currentRole={userRole}
           userRole={userRole}
-          onChangeRole={setUserRole}
+          onChangeRole={(newRole) => {
+            setUserRole(newRole);
+            showCloudNotification(`تم تفعيل صلاحيات دور: ${ROLE_DEFINITIONS[newRole]?.titleAr || newRole}`);
+          }}
           reportDate={referenceDate}
           lastUpdate={lastUpdate}
           isRefreshing={isRefreshing}
@@ -451,21 +767,76 @@ export default function App() {
           onLogout={handleLogout}
           onSelectTab={(tab) => setBottomTab(tab)}
           usersCount={users.length}
-          onOpenSupabase={() => setIsSupabaseOpen(true)}
+          onOpenSupabase={
+            userRole === 'admin' &&
+            currentUser?.role === 'admin' &&
+            (currentUser?.username?.toLowerCase() === 'admin' || currentUser?.id === 'usr-1')
+              ? () => setIsSupabaseOpen(true)
+              : undefined
+          }
+          users={users}
+          onSwitchUser={(u) => {
+            handleLogin(u);
+            showCloudNotification(`تم التبديل إلى حساب: ${u.name} (${ROLE_DEFINITIONS[u.role]?.badgeAr})`);
+          }}
+          cloudStatus={cloudStatus}
         />
 
-        {/* 2. EXECUTIVE PRIMARY NAVIGATION (Matches nav:nth-of-type(1)) */}
+        {/* ROLE & PERMISSIONS ACTIVE STATUS BAR (Shows current role & permissions clearly) */}
+        {(userRole !== 'admin' || isSimulatingRole) && (
+          <div className="mb-3 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-slate-900 via-[#0c1426] to-slate-900 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-2.5 text-xs">
+              <span className={`px-2.5 py-1 rounded-lg font-black border ${activeRoleMeta.badgeClass}`}>
+                {activeRoleMeta.badgeAr}
+              </span>
+              <span className="font-bold text-white">
+                {userRole === 'viewer'
+                  ? 'وضع المشاهد والمدقق (View Only): متاح استعراض الرخص والتقارير فقط — تم قفل وحجب كافة أزرار الإضافة والتعديل والنقل والإعدادات.'
+                  : userRole === 'branch_manager'
+                  ? `وضع مدير الفرع (${currentUser.assignedBranch || 'الفرع المخصص'}): متاح متابعة وتجديد الرخص فقط — تم حجب نقل المركبات وإضافة السيارات والإعدادات.`
+                  : 'وضع مدير الحركة والأسطول: متاح إدارة الأسطول والرخص ونقل المركبات — تم حجب إدارة المستخدمين وإعدادات النظام.'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {isSimulatingRole && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserRole('admin');
+                    showCloudNotification('تمت استعادة صلاحيات المدير العام (Admin) الكاملة 👑');
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-md"
+                >
+                  <Crown className="w-3.5 h-3.5" />
+                  <span>العودة لوضع المدير العام (Admin)</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 font-bold text-xs border border-white/10 transition-all cursor-pointer"
+              >
+                تغيير الحساب
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 2. EXECUTIVE PRIMARY NAVIGATION */}
         <BottomNav
           lang={lang}
           activeTab={bottomTab}
-          isAdmin={currentUser?.role === 'admin'}
+          isAdmin={canUserManageUsers}
+          canManageSettings={canUserManageSettings}
+          canExportReports={canUserExport}
           onOpenUserManagement={() => setIsUserManagementOpen(true)}
           onSelectTab={(tab) => {
             setBottomTab(tab);
             if (tab === 'vehicles_list') {
               setFilters({
                 search: '',
-                branch: 'all',
+                branch: currentUser.role === 'branch_manager' && currentUser.assignedBranch ? currentUser.assignedBranch : 'all',
                 status: 'all',
                 licenseType: 'all',
                 model: 'all',
@@ -481,7 +852,6 @@ export default function App() {
         {/* VIEW A: DASHBOARD (لوحة التحكم العامة) */}
         {bottomTab === 'dashboard' && (
           <div className="space-y-4">
-            {/* Executive Metric KPI Cards */}
             <TopMetricCards
               lang={lang}
               trafficMetrics={stats.traffic}
@@ -501,7 +871,6 @@ export default function App() {
               }}
             />
 
-            {/* Apple SaaS Toolbar */}
             <ModernFilterBar
               lang={lang}
               filters={filters}
@@ -509,19 +878,22 @@ export default function App() {
               branches={BRANCHES}
               totalResults={filteredVehicles.length}
               totalFleet={vehicles.length}
-              onAddLicense={() => setIsAddOpen(true)}
-              onEditData={() => {
+              canAddVehicle={canUserAdd}
+              canEditLicense={canUserEdit}
+              canTransferVehicle={canUserTransfer}
+              canExportData={canUserExport}
+              onAddLicense={canUserAdd ? () => setIsAddOpen(true) : undefined}
+              onEditData={canUserEdit ? () => {
                 setActiveVehicle(vehicles[0] || null);
                 setIsEditOpen(true);
-              }}
-              onTransferVehicle={() => {
+              } : undefined}
+              onTransferVehicle={canUserTransfer ? () => {
                 setActiveVehicle(vehicles[0] || null);
                 setIsTransferOpen(true);
-              }}
-              onExportData={() => setIsExportOpen(true)}
+              } : undefined}
+              onExportData={canUserExport ? () => setIsExportOpen(true) : undefined}
             />
 
-            {/* Analytics & Charts */}
             <ChartsSection
               lang={lang}
               vehicles={filteredVehicles}
@@ -531,7 +903,6 @@ export default function App() {
               onFilterStatus={(status) => setFilters(prev => ({ ...prev, status }))}
             />
 
-            {/* Master Fleet & License Table */}
             <div className="mb-4">
               <LicenseTable
                 lang={lang}
@@ -542,14 +913,14 @@ export default function App() {
                   setActiveVehicle(v);
                   setIsDrawerOpen(true);
                 }}
-                onManageVehicle={(v) => {
+                onManageVehicle={canUserEdit ? (v) => {
                   setActiveVehicle(v);
                   setIsEditOpen(true);
-                }}
-                onTransferVehicle={(v) => {
+                } : undefined}
+                onTransferVehicle={canUserTransfer ? (v) => {
                   setActiveVehicle(v);
                   setIsTransferOpen(true);
-                }}
+                } : undefined}
               />
             </div>
           </div>
@@ -569,20 +940,22 @@ export default function App() {
                   </h2>
                   <p className="text-xs text-slate-300 mt-0.5">
                     {lang === 'ar'
-                      ? `استعراض أسطول النقل والتوصيل بالكامل (${vehicles.length} مركبة) عبر جميع الفروع مع تحكم فوري.`
-                      : `Complete overview of all ${vehicles.length} delivery fleet vehicles with branch tracking.`}
+                      ? `استعراض أسطول النقل والتوصيل بالكامل (${vehicles.length} مركبة) عبر جميع الفروع.`
+                      : `Complete overview of all ${vehicles.length} delivery fleet vehicles.`}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsAddOpen(true)}
-                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs shadow-lg flex items-center gap-1.5 cursor-pointer transition-all hover:scale-[1.02] active:scale-95"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{lang === 'ar' ? 'إضافة سيارة جديدة' : 'Add Vehicle'}</span>
-                </button>
+                {canUserAdd && (
+                  <button
+                    onClick={() => setIsAddOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs shadow-lg flex items-center gap-1.5 cursor-pointer transition-all hover:scale-[1.02] active:scale-95"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{lang === 'ar' ? 'إضافة سيارة جديدة' : 'Add Vehicle'}</span>
+                  </button>
+                )}
                 {canUserTransfer && (
                   <button
                     onClick={() => setIsTransferOpen(true)}
@@ -602,17 +975,20 @@ export default function App() {
               branches={BRANCHES}
               totalResults={filteredVehicles.length}
               totalFleet={vehicles.length}
-              onAddLicense={() => setIsAddOpen(true)}
-              onEditData={() => {
+              canAddVehicle={canUserAdd}
+              canEditLicense={canUserEdit}
+              canTransferVehicle={canUserTransfer}
+              canExportData={canUserExport}
+              onAddLicense={canUserAdd ? () => setIsAddOpen(true) : undefined}
+              onEditData={canUserEdit ? () => {
                 setActiveVehicle(vehicles[0] || null);
                 setIsEditOpen(true);
-              }}
-              canTransferVehicle={canUserTransfer}
+              } : undefined}
               onTransferVehicle={canUserTransfer ? () => {
                 setActiveVehicle(vehicles[0] || null);
                 setIsTransferOpen(true);
               } : undefined}
-              onExportData={() => setIsExportOpen(true)}
+              onExportData={canUserExport ? () => setIsExportOpen(true) : undefined}
             />
 
             <LicenseTable
@@ -624,10 +1000,10 @@ export default function App() {
                 setActiveVehicle(v);
                 setIsDrawerOpen(true);
               }}
-              onManageVehicle={(v) => {
+              onManageVehicle={canUserEdit ? (v) => {
                 setActiveVehicle(v);
                 setIsEditOpen(true);
-              }}
+              } : undefined}
               onTransferVehicle={canUserTransfer ? (v) => {
                 setActiveVehicle(v);
                 setIsTransferOpen(true);
@@ -656,7 +1032,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Quick Status Toggles */}
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <button
                   onClick={() => setFilters(prev => ({ ...prev, status: 'all', licenseType: 'all' }))}
@@ -727,17 +1102,20 @@ export default function App() {
               branches={BRANCHES}
               totalResults={filteredVehicles.length}
               totalFleet={vehicles.length}
-              onAddLicense={() => setIsAddOpen(true)}
-              onEditData={() => {
+              canAddVehicle={canUserAdd}
+              canEditLicense={canUserEdit}
+              canTransferVehicle={canUserTransfer}
+              canExportData={canUserExport}
+              onAddLicense={canUserAdd ? () => setIsAddOpen(true) : undefined}
+              onEditData={canUserEdit ? () => {
                 setActiveVehicle(vehicles[0] || null);
                 setIsEditOpen(true);
-              }}
-              canTransferVehicle={canUserTransfer}
+              } : undefined}
               onTransferVehicle={canUserTransfer ? () => {
                 setActiveVehicle(vehicles[0] || null);
                 setIsTransferOpen(true);
               } : undefined}
-              onExportData={() => setIsExportOpen(true)}
+              onExportData={canUserExport ? () => setIsExportOpen(true) : undefined}
             />
 
             <LicenseTable
@@ -749,10 +1127,10 @@ export default function App() {
                 setActiveVehicle(v);
                 setIsDrawerOpen(true);
               }}
-              onManageVehicle={(v) => {
+              onManageVehicle={canUserEdit ? (v) => {
                 setActiveVehicle(v);
                 setIsEditOpen(true);
-              }}
+              } : undefined}
               onTransferVehicle={canUserTransfer ? (v) => {
                 setActiveVehicle(v);
                 setIsTransferOpen(true);
@@ -762,7 +1140,7 @@ export default function App() {
         )}
 
         {/* VIEW D: REPORTS & AUDIT (التقارير والطباعة) */}
-        {bottomTab === 'reports' && (
+        {bottomTab === 'reports' && canUserExport && (
           <div className="mb-6">
             <ReportsView
               lang={lang}
@@ -798,24 +1176,35 @@ export default function App() {
         )}
 
         {/* VIEW F: SYSTEM SETTINGS (إعدادات النظام والمهل) */}
-        {bottomTab === 'settings' && (
+        {bottomTab === 'settings' && canUserManageSettings && (
           <div className="mb-6">
             <SettingsView
               lang={lang}
               thresholdDays={thresholdDays}
-              onUpdateThreshold={setThresholdDays}
+              onUpdateThreshold={async (days) => {
+                setThresholdDays(days);
+                const updated = { ...settings, expiringDaysThreshold: days };
+                setSettings(updated);
+                await saveSettingsToSupabase(updated, referenceDate);
+                showCloudNotification(`تم تحديث مهلة التنبيه إلى (${days} يوم) في Supabase ✓`);
+              }}
               referenceDate={referenceDate}
-              onUpdateReferenceDate={setReferenceDate}
+              onUpdateReferenceDate={async (d) => {
+                setReferenceDate(d);
+                await saveSettingsToSupabase(settings, d);
+              }}
               userRole={userRole}
               onUpdateRole={setUserRole}
               branches={BRANCHES}
               totalVehicles={vehicles.length}
               settings={settings}
-              onUpdateSettings={(newSettings) => {
+              onUpdateSettings={async (newSettings) => {
                 setSettings(newSettings);
                 if (newSettings.expiringDaysThreshold) {
                   setThresholdDays(newSettings.expiringDaysThreshold);
                 }
+                await saveSettingsToSupabase(newSettings, referenceDate);
+                showCloudNotification('تم حفظ إعدادات النظام في سحابة Supabase ✓');
               }}
               vehicles={vehicles}
               onRestoreVehicles={setVehicles}
@@ -842,46 +1231,56 @@ export default function App() {
 
       {/* GLOBAL MODALS */}
       {/* 1. Add Vehicle / License Modal */}
-      <AddVehicleModal
-        isOpen={isAddOpen}
-        onClose={() => setIsAddOpen(false)}
-        branches={BRANCHES}
-        onAdd={handleAddVehicle}
-        lang={lang}
-      />
+      {canUserAdd && (
+        <AddVehicleModal
+          isOpen={isAddOpen}
+          onClose={() => setIsAddOpen(false)}
+          branches={BRANCHES}
+          onAdd={handleAddVehicle}
+          lang={lang}
+        />
+      )}
 
       {/* 2. Edit Vehicle & Licenses Modal */}
-      <EditVehicleModal
-        isOpen={isEditOpen}
-        onClose={() => setIsEditOpen(false)}
-        vehicles={vehicles}
-        branches={BRANCHES}
-        initialVehicleId={activeVehicle?.id}
-        onSave={handleUpdateVehicle}
-        lang={lang}
-      />
+      {canUserEdit && (
+        <EditVehicleModal
+          isOpen={isEditOpen}
+          onClose={() => setIsEditOpen(false)}
+          vehicles={vehicles}
+          branches={BRANCHES}
+          initialVehicleId={activeVehicle?.id}
+          onSave={handleUpdateVehicle}
+          onDelete={canUserDelete ? handleDeleteVehicle : undefined}
+          canDelete={canUserDelete}
+          lang={lang}
+        />
+      )}
 
       {/* 3. Transfer Vehicle Modal */}
-      <TransferVehicleModal
-        isOpen={isTransferOpen}
-        onClose={() => setIsTransferOpen(false)}
-        vehicles={vehicles}
-        branches={BRANCHES}
-        initialVehicleId={activeVehicle?.id}
-        onTransfer={handleTransferVehicle}
-        lang={lang}
-        canTransfer={canUserTransfer}
-      />
+      {canUserTransfer && (
+        <TransferVehicleModal
+          isOpen={isTransferOpen}
+          onClose={() => setIsTransferOpen(false)}
+          vehicles={vehicles}
+          branches={BRANCHES}
+          initialVehicleId={activeVehicle?.id}
+          onTransfer={handleTransferVehicle}
+          lang={lang}
+          canTransfer={canUserTransfer}
+        />
+      )}
 
       {/* 4. Export Modal */}
-      <ExportModal
-        isOpen={isExportOpen}
-        onClose={() => setIsExportOpen(false)}
-        vehicles={vehicles}
-        thresholdDays={thresholdDays}
-        referenceDate={referenceDate}
-        lang={lang}
-      />
+      {canUserExport && (
+        <ExportModal
+          isOpen={isExportOpen}
+          onClose={() => setIsExportOpen(false)}
+          vehicles={vehicles}
+          thresholdDays={thresholdDays}
+          referenceDate={referenceDate}
+          lang={lang}
+        />
+      )}
 
       {/* 5. Quick Vehicle Drawer */}
       <VehicleDrawer
@@ -893,20 +1292,20 @@ export default function App() {
         referenceDate={referenceDate}
         transferRecords={transfers}
         auditRecords={auditLogs}
-        onManageData={(v) => {
+        onManageData={canUserEdit ? (v) => {
           setActiveVehicle(v);
           setIsDrawerOpen(false);
           setIsEditOpen(true);
-        }}
+        } : undefined}
       />
 
-      {/* 6. User Management Modal (Admin only or management view) */}
-      {currentUser && (
+      {/* 6. User Management Modal */}
+      {currentUser && canUserManageUsers && (
         <UserManagementModal
           isOpen={isUserManagementOpen}
           onClose={() => setIsUserManagementOpen(false)}
           users={users}
-          onUpdateUsers={setUsers}
+          onUpdateUsers={handleUpdateUsers}
           currentUser={currentUser}
           branches={BRANCHES}
           lang={lang}
@@ -922,13 +1321,22 @@ export default function App() {
         lang={lang}
       />
 
-      {/* 8. Supabase Database Integration Modal */}
-      <SupabaseModal
-        isOpen={isSupabaseOpen}
-        onClose={() => setIsSupabaseOpen(false)}
-        vehicles={vehicles}
-        onRefreshVehicles={handleRefresh}
-      />
+      {/* 8. Supabase Database Integration Modal - Exclusive to Master Admin (Walid Adel) */}
+      {userRole === 'admin' &&
+        currentUser?.role === 'admin' &&
+        (currentUser?.username?.toLowerCase() === 'admin' || currentUser?.id === 'usr-1') && (
+          <SupabaseModal
+            isOpen={isSupabaseOpen}
+            onClose={() => setIsSupabaseOpen(false)}
+            vehicles={vehicles}
+            users={users}
+            transfers={transfers}
+            auditLogs={auditLogs}
+            settings={settings}
+            referenceDate={referenceDate}
+            onRefreshVehicles={handleRefresh}
+          />
+        )}
     </div>
   );
 }

@@ -171,18 +171,82 @@ export const ROLE_DEFINITIONS: Record<UserRole, RoleMeta> = {
 };
 
 /**
- * Returns the effective permissions for a user or fallback role.
+ * Sanitizes permissions for a given role so that restricted roles (like viewer or branch_manager)
+ * never accidentally inherit admin/write privileges.
+ */
+export function sanitizeUserPermissions(
+  role: UserRole,
+  customPerms?: Partial<UserPermissions> | null
+): UserPermissions {
+  const defaults = ROLE_DEFAULT_PERMISSIONS[role] || ROLE_DEFAULT_PERMISSIONS.viewer;
+  if (!customPerms) {
+    return { ...defaults };
+  }
+
+  const merged: UserPermissions = {
+    ...defaults,
+    ...customPerms,
+  };
+
+  if (role === 'viewer') {
+    // Viewer is strictly read-only — cannot edit, add, transfer, delete, or manage system/users
+    return {
+      ...merged,
+      canViewLicenses: true,
+      canEditLicenses: false,
+      canAddVehicles: false,
+      canTransferVehicles: false,
+      canManageUsers: false,
+      canManageSettings: false,
+      canDeleteRecords: false,
+    };
+  }
+
+  if (role === 'branch_manager') {
+    return {
+      ...merged,
+      canViewLicenses: true,
+      canTransferVehicles: false,
+      canManageUsers: false,
+      canManageSettings: false,
+      canDeleteRecords: false,
+    };
+  }
+
+  if (role === 'fleet_manager') {
+    return {
+      ...merged,
+      canViewLicenses: true,
+      canManageUsers: false,
+      canManageSettings: false,
+    };
+  }
+
+  if (role === 'admin') {
+    return { ...ROLE_DEFAULT_PERMISSIONS.admin };
+  }
+
+  return merged;
+}
+
+/**
+ * Returns the effective permissions for a user or active/simulated role.
  */
 export function getUserPermissions(
   user?: SystemUser | null,
-  fallbackRole: UserRole = 'viewer'
+  activeRole?: UserRole
 ): UserPermissions {
-  if (user?.permissions) {
-    // If the user is a branch manager, enforce that canTransferVehicles is false unless overridden by admin intentionally
-    return user.permissions;
+  if (!user) {
+    const r = activeRole || 'viewer';
+    return { ...(ROLE_DEFAULT_PERMISSIONS[r] || ROLE_DEFAULT_PERMISSIONS.viewer) };
   }
-  const role = user?.role || fallbackRole;
-  return ROLE_DEFAULT_PERMISSIONS[role] || ROLE_DEFAULT_PERMISSIONS.viewer;
+
+  // If Admin is simulating another role in the UI, strictly apply that simulated role's permissions
+  if (activeRole && activeRole !== user.role) {
+    return { ...(ROLE_DEFAULT_PERMISSIONS[activeRole] || ROLE_DEFAULT_PERMISSIONS.viewer) };
+  }
+
+  return sanitizeUserPermissions(user.role, user.permissions);
 }
 
 /**

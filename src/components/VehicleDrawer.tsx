@@ -24,7 +24,7 @@ interface VehicleDrawerProps {
   vehicle: Vehicle | null;
   isOpen: boolean;
   onClose: () => void;
-  onManageData: (vehicle: Vehicle) => void;
+  onManageData?: (vehicle: Vehicle) => void;
   transferRecords: TransferRecord[];
   auditRecords: AuditRecord[];
   thresholdDays: number;
@@ -115,19 +115,28 @@ export const VehicleDrawer: React.FC<VehicleDrawerProps> = ({
 
         {/* Action Button: إدارة البيانات */}
         <div className="p-4 bg-slate-900/40 border-b border-white/5 flex items-center justify-between">
-          <span className="text-xs text-slate-400">
-            {lang === 'ar' ? 'لتعديل البيانات أو تجديد الرخص أو نقل الفرع:' : 'To edit data, renew licenses, or transfer branch:'}
-          </span>
-          <button
-            onClick={() => {
-              onClose();
-              onManageData(vehicle);
-            }}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white text-xs font-bold shadow-lg shadow-blue-950 transition-all active:scale-[0.98]"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            <span>{lang === 'ar' ? 'إدارة البيانات الموحدة' : 'Unified Data Management'}</span>
-          </button>
+          {onManageData ? (
+            <>
+              <span className="text-xs text-slate-400">
+                {lang === 'ar' ? 'لتعديل البيانات أو تجديد الرخص أو نقل الفرع:' : 'To edit data, renew licenses, or transfer branch:'}
+              </span>
+              <button
+                onClick={() => {
+                  onClose();
+                  onManageData(vehicle);
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-500 hover:to-indigo-600 text-white text-xs font-bold shadow-lg shadow-blue-950 transition-all active:scale-[0.98] cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{lang === 'ar' ? 'إدارة البيانات الموحدة' : 'Unified Data Management'}</span>
+              </button>
+            </>
+          ) : (
+            <div className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-800/70 border border-slate-600/30 text-xs text-slate-300 font-bold">
+              <span>👁️ وضع المشاهدة والتدقيق (للقراءة والاطلاع فقط)</span>
+              <span className="text-[10px] text-slate-400">غير مصرح بالتعديل لهذا الدور</span>
+            </div>
+          )}
         </div>
 
         {/* Drawer Body - Scrollable */}

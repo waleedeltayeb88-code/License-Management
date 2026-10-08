@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { SystemUser, UserRole } from '../../types';
 import { Language } from '../../utils/i18n';
+import { sanitizeUserPermissions, ROLE_DEFINITIONS } from '../../utils/permissionUtils';
 import licenseShowcaseImg from '../../assets/images/vehicle_license_showcase_1790328617864.jpg';
 
 interface LandingPageProps {
@@ -86,9 +87,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   };
 
   const triggerAuthFlow = (targetUser: SystemUser) => {
+    const cleanTarget: SystemUser = {
+      ...targetUser,
+      permissions: sanitizeUserPermissions(targetUser.role, targetUser.permissions),
+    };
     playTactileFeedback('granted');
     setIsAuthenticating(true);
-    setAuthSuccessUser(targetUser);
+    setAuthSuccessUser(cleanTarget);
     setAuthPhase(1); // 1: Validating credentials
 
     // Phase 2: Resolving permissions & branch access
@@ -104,7 +109,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     // Transition to main dashboard
     setTimeout(() => {
       onLogin({
-        ...targetUser,
+        ...cleanTarget,
         lastLogin: new Date().toISOString().slice(0, 16).replace('T', ' '),
       });
     }, 1350);
@@ -451,18 +456,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <ArrowLeft className="w-4 h-4" />
               </button>
             </form>
-
-            {/* Notice Footer inside card */}
-            <div className="pt-6 border-t border-white/5 text-center text-xs text-slate-400">
-              <span>هل تواجه مشكلة في تسجيل الدخول؟ </span>
-              <button
-                type="button"
-                onClick={() => setShowSupportModal(true)}
-                className="text-amber-400 hover:underline cursor-pointer font-medium"
-              >
-                تواصل مع الدعم الفني وإدارة النظام
-              </button>
-            </div>
 
           </div>
 

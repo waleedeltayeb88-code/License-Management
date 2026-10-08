@@ -12,7 +12,8 @@ import {
   Building2,
   AlertCircle,
   CheckCircle2,
-  Clock
+  Clock,
+  Trash2
 } from 'lucide-react';
 import { Vehicle } from '../../types';
 import { Language } from '../../utils/i18n';
@@ -25,6 +26,8 @@ interface EditVehicleModalProps {
   branches: string[];
   initialVehicleId?: string;
   onSave: (updatedVehicle: Vehicle) => void;
+  onDelete?: (vehicleId: string) => void;
+  canDelete?: boolean;
   lang: Language;
 }
 
@@ -35,6 +38,8 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
   branches = [],
   initialVehicleId,
   onSave,
+  onDelete,
+  canDelete = false,
 }) => {
   // Step 1: Branch Filter & Search
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all');
@@ -433,21 +438,40 @@ export const EditVehicleModal: React.FC<EditVehicleModalProps> = ({
               </div>
 
               {/* Actions */}
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/5 border border-white/10 cursor-pointer"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 transition-all cursor-pointer shadow-lg shadow-emerald-950 border border-emerald-400/30"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>حفظ وتحديث رخص السيارة</span>
-                </button>
+              <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/10">
+                <div>
+                  {canDelete && onDelete && formData && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (confirm(`هل أنت متأكد من حذف السيارة رقم (${formData.plateLetters || ''} ${formData.vehicleNumber}) نهائياً من قاعدة البيانات؟`)) {
+                          onDelete(formData.id);
+                          onClose();
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-rose-300 bg-rose-500/15 hover:bg-rose-500/30 border border-rose-500/35 transition-all cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>حذف السيارة نهائياً</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-white/5 border border-white/10 cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 transition-all cursor-pointer shadow-lg shadow-emerald-950 border border-emerald-400/30"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>حفظ وتحديث رخص السيارة</span>
+                  </button>
+                </div>
               </div>
             </>
           )}

@@ -1,13 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
-import { Vehicle, TransferRecord, AuditRecord, SystemNotification } from '../types';
+import {
+  Vehicle,
+  TransferRecord,
+  AuditRecord,
+  SystemNotification,
+  SystemUser,
+  UserRole,
+  AppSettings
+} from '../types';
+import { sanitizeUserPermissions } from '../utils/permissionUtils';
 
 const FALLBACK_SUPABASE_URL = 'https://khqajtumumgslnphkvdu.supabase.co';
+const FALLBACK_SUPABASE_ANON_JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtocWFqdHVtdW1nc2xucGhrdmR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0MDc3NjEsImV4cCI6MjEwNTk4Mzc2MX0.2gpMRt76Fwf7mC8rB1SUoFbfc57x1kyTp83JlIf00Tc';
 const FALLBACK_SUPABASE_KEY = 'sb_publishable_e0d1ooFJ1ljhpnLrXCNXZg_zh_K6uAh';
 
 function getSanitizedUrl(): string {
   try {
-    let raw = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-    // Strip surrounding quotes if present
+    let raw = (import.meta?.env?.VITE_SUPABASE_URL || '').trim();
     raw = raw.replace(/^["']|["']$/g, '').trim();
 
     if (!raw || raw.includes('your-project') || raw.includes('MY_APP_URL')) {
@@ -29,17 +38,21 @@ function getSanitizedUrl(): string {
 }
 
 function getSanitizedKey(): string {
-  let key = (
-    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    import.meta.env.VITE_SUPABASE_ANON_KEY ||
-    ''
-  ).trim();
-  key = key.replace(/^["']|["']$/g, '').trim();
+  try {
+    let key = (
+      import.meta?.env?.VITE_SUPABASE_ANON_KEY ||
+      import.meta?.env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      ''
+    ).trim();
+    key = key.replace(/^["']|["']$/g, '').trim();
 
-  if (!key || key.includes('your-anon-key')) {
-    return FALLBACK_SUPABASE_KEY;
+    if (!key || key.includes('your-anon-key')) {
+      return FALLBACK_SUPABASE_ANON_JWT;
+    }
+    return key;
+  } catch {
+    return FALLBACK_SUPABASE_ANON_JWT;
   }
-  return key;
 }
 
 const SUPABASE_URL = getSanitizedUrl();
@@ -73,12 +86,27 @@ export const SUPABASE_CONFIG = {
   projectId: 'khqajtumumgslnphkvdu'
 };
 
-// Check if Supabase connection & vehicles table are ready
-export async function checkSupabaseConnection(): Promise<{ connected: boolean; tablesExist: boolean; error?: string }> {
+export interface SupabaseStatusSummary {
+  connected: boolean;
+  tablesExist: boolean;
+  counts?: {
+    vehicles: number;
+    users: number;
+    transfers: number;
+    auditLogs: number;
+    branches: number;
+  };
+  error?: string;
+}
+
+// Check if Supabase connection & tables are ready + get live counts
+export async function checkSupabaseConnection(): Promise<SupabaseStatusSummary> {
   try {
-    const { data, error } = await supabase.from('vehicles').select('id').limit(1);
+    const { count: vCount, error } = await supabase
+      .from('vehicles')
+      .select('id', { count: 'exact', head: true });
+
     if (error) {
-      // If table does not exist (PGRST205, PGRST204, 42P01, etc.)
       if (
         error.code === 'PGRST205' ||
         error.code === '42P01' ||
@@ -87,17 +115,45 @@ export async function checkSupabaseConnection(): Promise<{ connected: boolean; t
         error.code === 'PGRST204' ||
         error.code === 'PGRST301'
       ) {
-        return { connected: true, tablesExist: false, error: 'المشروع متصل ولكن الجداول لم تُنشأ بعد في Supabase' };
+        return {
+          connected: true,
+          tablesExist: false,
+          error: 'المشروع متصل ولكن الجداول لم تُنشأ بعد في Supabase'
+        };
       }
       return { connected: false, tablesExist: false, error: error.message };
     }
-    return { connected: true, tablesExist: true };
+
+    const [uRes, tRes, aRes, bRes] = await Promise.all([
+      supabase.from('system_users').select('id', { count: 'exact', head: true }),
+      supabase.from('transfers').select('id', { count: 'exact', head: true }),
+      supabase.from('audit_logs').select('id', { count: 'exact', head: true }),
+      supabase.from('branches').select('id', { count: 'exact', head: true })
+    ]);
+
+    return {
+      connected: true,
+      tablesExist: true,
+      counts: {
+        vehicles: vCount ?? 0,
+        users: uRes.count ?? 0,
+        transfers: tRes.count ?? 0,
+        auditLogs: aRes.count ?? 0,
+        branches: bRes.count ?? 0
+      }
+    };
   } catch (err: any) {
-    return { connected: false, tablesExist: false, error: err?.message || 'خطأ غير معروف في الاتصال بـ Supabase' };
+    return {
+      connected: false,
+      tablesExist: false,
+      error: err?.message || 'خطأ غير معروف في الاتصال بـ Supabase'
+    };
   }
 }
 
-// Fetch all vehicles from Supabase
+// ============================================================================
+// 1. VEHICLES CRUD
+// ============================================================================
 export async function fetchVehiclesFromSupabase(): Promise<Vehicle[] | null> {
   try {
     const { data, error } = await supabase
@@ -110,27 +166,27 @@ export async function fetchVehiclesFromSupabase(): Promise<Vehicle[] | null> {
     return data.map((row: any) => ({
       id: row.id,
       vehicleNumber: row.vehicle_number,
-      plateLetters: row.plate_letters,
-      vin: row.vin,
-      model: row.model,
-      branch: row.branch,
+      plateLetters: row.plate_letters || '',
+      vin: row.vin || '',
+      model: row.model || 'سوزوكي فان',
+      branch: row.branch || '',
       trafficLicense: {
         licenseNumber: row.traffic_license_number || '',
         issueDate: row.traffic_issue_date || '',
         expiryDate: row.traffic_expiry_date || '',
-        documentUrl: row.traffic_document_url,
-        notes: row.traffic_notes
+        documentUrl: row.traffic_document_url || undefined,
+        notes: row.traffic_notes || undefined
       },
       commercialLicense: {
         licenseNumber: row.commercial_license_number || '',
         issueDate: row.commercial_issue_date || '',
         expiryDate: row.commercial_expiry_date || '',
-        documentUrl: row.commercial_document_url,
-        notes: row.commercial_notes
+        documentUrl: row.commercial_document_url || undefined,
+        notes: row.commercial_notes || undefined
       },
-      notes: row.notes,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
+      notes: row.notes || undefined,
+      createdAt: row.created_at ? String(row.created_at).slice(0, 10) : '2025-01-01',
+      updatedAt: row.updated_at ? String(row.updated_at).slice(0, 10) : '2025-06-04'
     }));
   } catch (err) {
     console.error('Error fetching vehicles from Supabase:', err);
@@ -138,7 +194,6 @@ export async function fetchVehiclesFromSupabase(): Promise<Vehicle[] | null> {
   }
 }
 
-// Insert or update vehicle in Supabase
 export async function saveVehicleToSupabase(v: Vehicle): Promise<boolean> {
   try {
     const payload = {
@@ -163,6 +218,9 @@ export async function saveVehicleToSupabase(v: Vehicle): Promise<boolean> {
     };
 
     const { error } = await supabase.from('vehicles').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('Supabase saveVehicle error:', error);
+    }
     return !error;
   } catch (err) {
     console.error('Failed to save vehicle to Supabase:', err);
@@ -170,7 +228,6 @@ export async function saveVehicleToSupabase(v: Vehicle): Promise<boolean> {
   }
 }
 
-// Bulk seed vehicles to Supabase
 export async function seedVehiclesToSupabase(vehicles: Vehicle[]): Promise<{ success: boolean; count: number }> {
   try {
     const rows = vehicles.map(v => ({
@@ -191,11 +248,10 @@ export async function seedVehiclesToSupabase(vehicles: Vehicle[]): Promise<{ suc
       commercial_document_url: v.commercialLicense?.documentUrl || null,
       commercial_notes: v.commercialLicense?.notes || null,
       notes: v.notes || null,
-      created_at: v.createdAt || new Date().toISOString(),
-      updated_at: v.updatedAt || new Date().toISOString()
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     }));
 
-    // Chunk in batches of 50
     const chunkSize = 50;
     let inserted = 0;
     for (let i = 0; i < rows.length; i += chunkSize) {
@@ -214,7 +270,6 @@ export async function seedVehiclesToSupabase(vehicles: Vehicle[]): Promise<{ suc
   }
 }
 
-// Delete vehicle from Supabase
 export async function deleteVehicleFromSupabase(id: string): Promise<boolean> {
   try {
     const { error } = await supabase.from('vehicles').delete().eq('id', id);
@@ -225,21 +280,194 @@ export async function deleteVehicleFromSupabase(id: string): Promise<boolean> {
   }
 }
 
-// Transfers logging
+// ============================================================================
+// 2. SYSTEM USERS & RBAC PERMISSIONS CRUD (public.system_users)
+// ============================================================================
+function normalizeRole(rawRole?: string): UserRole {
+  if (!rawRole) return 'viewer';
+  const r = rawRole.toLowerCase().trim();
+  if (r === 'admin') return 'admin';
+  if (r === 'fleet_manager' || r === 'logistics') return 'fleet_manager';
+  if (r === 'branch_manager') return 'branch_manager';
+  return 'viewer';
+}
+
+function userToSupabaseRow(u: SystemUser) {
+  const sanitizedPerms = sanitizeUserPermissions(u.role, u.permissions);
+  const metadataJson = JSON.stringify({
+    username: u.username,
+    password: u.password || '123456',
+    phone: u.phone || '',
+    title: u.title || '',
+    status: u.status || 'active',
+    createdAt: u.createdAt || new Date().toISOString().slice(0, 10),
+    lastLogin: u.lastLogin || '',
+    permissions: sanitizedPerms
+  });
+
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email || `${u.username}@seoudisupermarket.com`,
+    role: u.role,
+    branch: u.assignedBranch || null,
+    avatar: metadataJson,
+    active: u.status !== 'suspended',
+    last_login: new Date().toISOString()
+  };
+}
+
+function supabaseRowToUser(row: any): SystemUser {
+  const role = normalizeRole(row.role);
+  let meta: any = {};
+  if (row.avatar && typeof row.avatar === 'string' && row.avatar.trim().startsWith('{')) {
+    try {
+      meta = JSON.parse(row.avatar);
+    } catch {
+      meta = {};
+    }
+  }
+
+  const emailStr = row.email || 'user@seoudisupermarket.com';
+  const fallbackUsername = emailStr.split('@')[0].toLowerCase();
+  const username = (meta.username || fallbackUsername).trim();
+  const status: 'active' | 'suspended' =
+    meta.status === 'suspended' || row.active === false ? 'suspended' : 'active';
+
+  const permissions = sanitizeUserPermissions(role, meta.permissions);
+
+  return {
+    id: row.id,
+    username,
+    name: row.name || username,
+    email: emailStr,
+    password: meta.password || (username === 'admin' ? 'admin' : '123456'),
+    role,
+    title: meta.title || undefined,
+    assignedBranch: row.branch || meta.assignedBranch || undefined,
+    status,
+    createdAt: meta.createdAt || (row.created_at ? String(row.created_at).slice(0, 10) : '2025-01-01'),
+    lastLogin: meta.lastLogin || (row.last_login ? String(row.last_login).slice(0, 16).replace('T', ' ') : undefined),
+    phone: meta.phone || undefined,
+    permissions
+  };
+}
+
+export async function fetchUsersFromSupabase(): Promise<SystemUser[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('system_users')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error || !data) return null;
+    if (data.length === 0) return [];
+
+    return data.map(supabaseRowToUser);
+  } catch (err) {
+    console.error('Error fetching users from Supabase:', err);
+    return null;
+  }
+}
+
+export async function saveUserToSupabase(user: SystemUser): Promise<boolean> {
+  try {
+    const row = userToSupabaseRow(user);
+    const { error } = await supabase.from('system_users').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.error('saveUserToSupabase error:', error);
+    }
+    return !error;
+  } catch (err) {
+    console.error('saveUserToSupabase exception:', err);
+    return false;
+  }
+}
+
+export async function saveAllUsersToSupabase(users: SystemUser[]): Promise<boolean> {
+  try {
+    const rows = users.map(userToSupabaseRow);
+    const { error } = await supabase.from('system_users').upsert(rows, { onConflict: 'id' });
+    if (error) {
+      console.error('saveAllUsersToSupabase error:', error);
+      return false;
+    }
+
+    // Also remove any deleted users in Supabase that are not in the updated list
+    const { data: existing } = await supabase.from('system_users').select('id');
+    if (existing && existing.length > 0) {
+      const currentIds = new Set(users.map(u => u.id));
+      const toDelete = existing.filter((r: any) => !currentIds.has(r.id)).map((r: any) => r.id);
+      if (toDelete.length > 0) {
+        await supabase.from('system_users').delete().in('id', toDelete);
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.error('saveAllUsersToSupabase exception:', err);
+    return false;
+  }
+}
+
+export async function deleteUserFromSupabase(userId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('system_users').delete().eq('id', userId);
+    return !error;
+  } catch (err) {
+    console.error('deleteUserFromSupabase error:', err);
+    return false;
+  }
+}
+
+// ============================================================================
+// 3. TRANSFERS CRUD (public.transfers)
+// ============================================================================
+export async function fetchTransfersFromSupabase(): Promise<TransferRecord[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('transfers')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return null;
+    if (data.length === 0) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      vehicleId: row.vehicle_id || undefined,
+      vehicleNumber: row.vehicle_number,
+      fromBranch: row.from_branch,
+      toBranch: row.to_branch,
+      date: row.transfer_date,
+      time: row.transfer_time,
+      transferredBy: row.transferred_by,
+      reason: row.reason,
+      notes: row.notes || undefined
+    }));
+  } catch (err) {
+    console.error('fetchTransfersFromSupabase error:', err);
+    return null;
+  }
+}
+
 export async function saveTransferToSupabase(transfer: TransferRecord): Promise<boolean> {
   try {
-    const { error } = await supabase.from('transfers').insert({
-      id: transfer.id,
-      vehicle_id: transfer.vehicleId || null,
-      vehicle_number: transfer.vehicleNumber,
-      from_branch: transfer.fromBranch,
-      to_branch: transfer.toBranch,
-      transfer_date: transfer.date,
-      transfer_time: transfer.time,
-      transferred_by: transfer.transferredBy,
-      reason: transfer.reason,
-      notes: transfer.notes || null
-    });
+    const { error } = await supabase.from('transfers').upsert(
+      {
+        id: transfer.id,
+        vehicle_id: transfer.vehicleId || null,
+        vehicle_number: transfer.vehicleNumber,
+        from_branch: transfer.fromBranch,
+        to_branch: transfer.toBranch,
+        transfer_date: transfer.date,
+        transfer_time: transfer.time,
+        transferred_by: transfer.transferredBy,
+        reason: transfer.reason,
+        notes: transfer.notes || null
+      },
+      { onConflict: 'id' }
+    );
     return !error;
   } catch (err) {
     console.error('Save transfer error:', err);
@@ -247,7 +475,60 @@ export async function saveTransferToSupabase(transfer: TransferRecord): Promise<
   }
 }
 
-// Audit logging
+export async function seedTransfersToSupabase(transfers: TransferRecord[]): Promise<boolean> {
+  try {
+    if (!transfers || transfers.length === 0) return true;
+    const rows = transfers.map(t => ({
+      id: t.id,
+      vehicle_id: t.vehicleId || null,
+      vehicle_number: t.vehicleNumber,
+      from_branch: t.fromBranch,
+      to_branch: t.toBranch,
+      transfer_date: t.date,
+      transfer_time: t.time,
+      transferred_by: t.transferredBy,
+      reason: t.reason,
+      notes: t.notes || null
+    }));
+    const { error } = await supabase.from('transfers').upsert(rows, { onConflict: 'id' });
+    return !error;
+  } catch (err) {
+    console.error('seedTransfersToSupabase error:', err);
+    return false;
+  }
+}
+
+// ============================================================================
+// 4. AUDIT LOGS CRUD (public.audit_logs)
+// ============================================================================
+export async function fetchAuditLogsFromSupabase(): Promise<AuditRecord[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (error || !data) return null;
+    if (data.length === 0) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      user: row.user_name,
+      userRole: row.user_role || undefined,
+      action: row.action,
+      vehicleNumber: row.vehicle_number,
+      oldValue: row.old_value || '',
+      newValue: row.new_value || '',
+      date: row.log_date,
+      time: row.log_time
+    }));
+  } catch (err) {
+    console.error('fetchAuditLogsFromSupabase error:', err);
+    return null;
+  }
+}
+
 export async function saveAuditToSupabase(audit: AuditRecord): Promise<boolean> {
   try {
     const { error } = await supabase.from('audit_logs').insert({
@@ -265,6 +546,128 @@ export async function saveAuditToSupabase(audit: AuditRecord): Promise<boolean> 
   } catch (err) {
     console.error('Save audit error:', err);
     return false;
+  }
+}
+
+export async function seedAuditLogsToSupabase(logs: AuditRecord[]): Promise<boolean> {
+  try {
+    if (!logs || logs.length === 0) return true;
+    const { data: existing } = await supabase.from('audit_logs').select('id').limit(1);
+    if (existing && existing.length > 0) return true;
+
+    const rows = logs.map(a => ({
+      id: a.id,
+      user_name: a.user,
+      user_role: a.userRole || null,
+      action: a.action,
+      vehicle_number: a.vehicleNumber,
+      old_value: a.oldValue,
+      new_value: a.newValue,
+      log_date: a.date,
+      log_time: a.time
+    }));
+    const { error } = await supabase.from('audit_logs').insert(rows);
+    return !error;
+  } catch (err) {
+    console.error('seedAuditLogsToSupabase error:', err);
+    return false;
+  }
+}
+
+// ============================================================================
+// 5. SETTINGS & BRANCHES (public.settings, public.branches)
+// ============================================================================
+export async function fetchSettingsFromSupabase(): Promise<{
+  settings?: AppSettings;
+  referenceDate?: string;
+} | null> {
+  try {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('*')
+      .eq('key', 'seoudi_app_settings')
+      .maybeSingle();
+
+    if (error || !data || !data.value) return null;
+    return data.value as { settings?: AppSettings; referenceDate?: string };
+  } catch (err) {
+    console.error('fetchSettingsFromSupabase error:', err);
+    return null;
+  }
+}
+
+export async function saveSettingsToSupabase(
+  settings: AppSettings,
+  referenceDate?: string
+): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('settings').upsert(
+      {
+        key: 'seoudi_app_settings',
+        value: { settings, referenceDate },
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'key' }
+    );
+    return !error;
+  } catch (err) {
+    console.error('saveSettingsToSupabase error:', err);
+    return false;
+  }
+}
+
+export async function seedBranchesToSupabase(branches: string[]): Promise<boolean> {
+  try {
+    const rows = branches.map((name, idx) => ({
+      id: `branch-${idx + 1}`,
+      name,
+      code: `BR-${String(idx + 1).padStart(2, '0')}`,
+      city: name.includes('العلمين') ? 'الساحل الشمالي' : 'القاهرة الكبرى',
+      manager_name: 'إدارة تشغيل سعودي سوبر ماركت',
+      phone: '01144542800'
+    }));
+    const { error } = await supabase.from('branches').upsert(rows, { onConflict: 'id' });
+    return !error;
+  } catch (err) {
+    console.error('seedBranchesToSupabase error:', err);
+    return false;
+  }
+}
+
+// ============================================================================
+// 6. FULL SYSTEM SYNC TO SUPABASE
+// ============================================================================
+export async function syncAllDataToSupabase(payload: {
+  vehicles: Vehicle[];
+  users: SystemUser[];
+  transfers: TransferRecord[];
+  auditLogs: AuditRecord[];
+  branches: string[];
+  settings: AppSettings;
+  referenceDate: string;
+}): Promise<{ success: boolean; summary: string }> {
+  try {
+    const [vRes, uOk, tOk, aOk, bOk, sOk] = await Promise.all([
+      seedVehiclesToSupabase(payload.vehicles),
+      saveAllUsersToSupabase(payload.users),
+      seedTransfersToSupabase(payload.transfers),
+      seedAuditLogsToSupabase(payload.auditLogs),
+      seedBranchesToSupabase(payload.branches),
+      saveSettingsToSupabase(payload.settings, payload.referenceDate)
+    ]);
+
+    const ok = vRes.success && uOk;
+    return {
+      success: ok,
+      summary: ok
+        ? `تمت المزامنة الكاملة مع Supabase بنجاح: (${vRes.count} مركبة، ${payload.users.length} مستخدم وصلاحية، ${payload.transfers.length} حركة نقل، ${payload.branches.length} فرع، والإعدادات العامة) 🎉`
+        : 'حدث خطأ جزئي أثناء المزامنة، يرجى التأكد من تشغيل كود SQL في Supabase.'
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      summary: err?.message || 'فشلت عملية المزامنة الشاملة'
+    };
   }
 }
 
@@ -317,7 +720,7 @@ CREATE TABLE IF NOT EXISTS public.expenses (
     id TEXT PRIMARY KEY,
     vehicle_id TEXT,
     vehicle_number TEXT NOT NULL,
-    expense_type TEXT NOT NULL, -- traffic_renewal, commercial_renewal, inspection, fines, insurance, maintenance
+    expense_type TEXT NOT NULL,
     amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     receipt_number TEXT,
     payment_method TEXT DEFAULT 'cash',
@@ -346,7 +749,7 @@ CREATE TABLE IF NOT EXISTS public.system_users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    role TEXT NOT NULL DEFAULT 'viewer', -- admin, branch_manager, auditor, logistics, viewer
+    role TEXT NOT NULL DEFAULT 'viewer',
     branch TEXT,
     avatar TEXT,
     active BOOLEAN DEFAULT true,
@@ -360,7 +763,7 @@ CREATE TABLE IF NOT EXISTS public.notifications (
     title TEXT NOT NULL,
     message TEXT NOT NULL,
     vehicle_number TEXT,
-    priority TEXT DEFAULT 'medium', -- high, medium, low
+    priority TEXT DEFAULT 'medium',
     type TEXT DEFAULT 'system',
     is_read BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -477,23 +880,4 @@ DROP POLICY IF EXISTS "settings_update_policy" ON public.settings;
 CREATE POLICY "settings_select_policy" ON public.settings FOR SELECT USING (true);
 CREATE POLICY "settings_insert_policy" ON public.settings FOR INSERT WITH CHECK (key IS NOT NULL AND length(key) > 0);
 CREATE POLICY "settings_update_policy" ON public.settings FOR UPDATE USING (key IS NOT NULL) WITH CHECK (key IS NOT NULL);
-
--- إصلاح دالة rls_auto_enable لسد تحذيرات الأمان (Security Definer Warning Fix)
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'rls_auto_enable') THEN
-    ALTER FUNCTION public.rls_auto_enable() SECURITY INVOKER;
-    REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM anon, authenticated, public;
-  END IF;
-END $$;
-
--- =========================================================================
--- الفهارس لتسريع البحث والاستعلامات (Performance Indexes)
--- =========================================================================
-CREATE INDEX IF NOT EXISTS idx_vehicles_branch ON public.vehicles(branch);
-CREATE INDEX IF NOT EXISTS idx_vehicles_traffic_expiry ON public.vehicles(traffic_expiry_date);
-CREATE INDEX IF NOT EXISTS idx_vehicles_comm_expiry ON public.vehicles(commercial_expiry_date);
-CREATE INDEX IF NOT EXISTS idx_transfers_vehicle ON public.transfers(vehicle_number);
-CREATE INDEX IF NOT EXISTS idx_expenses_vehicle ON public.expenses(vehicle_number);
-CREATE INDEX IF NOT EXISTS idx_audit_vehicle ON public.audit_logs(vehicle_number);
 `;

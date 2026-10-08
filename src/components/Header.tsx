@@ -48,6 +48,9 @@ interface HeaderProps {
   onSelectTab?: (tab: any) => void;
   usersCount?: number;
   onOpenSupabase?: () => void;
+  users?: SystemUser[];
+  onSwitchUser?: (user: SystemUser) => void;
+  cloudStatus?: 'connected' | 'syncing' | 'error';
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -65,6 +68,9 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   usersCount,
   onOpenSupabase,
+  users = [],
+  onSwitchUser,
+  cloudStatus = 'connected',
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [roleSimulatorRole, setRoleSimulatorRole] = useState<UserRole>(userRole || currentRole || currentUser?.role || 'admin');
@@ -101,8 +107,8 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, [isDropdownOpen]);
 
-  const activeRole = currentUser?.role || 'admin';
-  const roleMeta = ROLE_DEFINITIONS[activeRole] || ROLE_DEFINITIONS.admin;
+  const activeRole = userRole || currentRole || currentUser?.role || 'viewer';
+  const roleMeta = ROLE_DEFINITIONS[activeRole] || ROLE_DEFINITIONS.viewer;
 
   const handleRoleSimulation = (role: UserRole) => {
     setRoleSimulatorRole(role);
@@ -164,7 +170,7 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Quick Admin User Management Button - Exclusive to Admin */}
-          {currentUser?.role === 'admin' && onOpenUserManagement && (
+          {activeRole === 'admin' && currentUser?.role === 'admin' && onOpenUserManagement && (
             <button
               onClick={onOpenUserManagement}
               className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/25 via-amber-400/20 to-amber-600/25 hover:from-amber-500/35 hover:to-amber-600/35 text-amber-300 text-xs font-bold border border-amber-500/50 shadow-md shadow-amber-950/40 transition-all cursor-pointer ring-1 ring-amber-400/30 active:scale-95"
@@ -200,7 +206,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* User Avatar with status dot */}
                 <div className="relative">
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500/30 via-emerald-600/20 to-slate-800 border border-amber-400/50 flex items-center justify-center text-amber-300 text-xs font-black font-mono">
-                    {currentUser.role === 'admin' ? '👑' : currentUser.name.slice(0, 1)}
+                    {activeRole === 'admin' ? '👑' : activeRole === 'viewer' ? '👁️' : currentUser.name.slice(0, 1)}
                   </div>
                   <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#090e1a] rounded-full" />
                 </div>
@@ -411,6 +417,45 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                   )}
 
+                  {/* QUICK ACCOUNT SWITCHER (تبديل سريع بين حسابات المستخدمين) */}
+                  {onSwitchUser && users.length > 1 && (
+                    <div className="p-2.5 rounded-xl bg-slate-900/90 border border-white/10 mb-2">
+                      <div className="text-[10px] font-bold text-slate-400 mb-1.5 flex items-center gap-1">
+                        <Users className="w-3 h-3 text-cyan-400" />
+                        <span>التبديل المباشر لحساب مستخدم آخر:</span>
+                      </div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                        {users.filter(u => u.status === 'active').map(u => {
+                          const isCurrent = u.id === currentUser.id && activeRole === u.role;
+                          const uMeta = ROLE_DEFINITIONS[u.role] || ROLE_DEFINITIONS.viewer;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                setIsDropdownOpen(false);
+                                onSwitchUser(u);
+                              }}
+                              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] transition-all cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 font-bold'
+                                  : 'bg-slate-800/60 hover:bg-slate-800 text-slate-300 border border-white/5'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 truncate">
+                                <span className="truncate">{u.name}</span>
+                                <span className="text-[9px] text-slate-400 font-mono">(@{u.username})</span>
+                              </div>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-black/40 text-amber-300 shrink-0">
+                                {uMeta.badgeAr}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* QUICK SHORTCUT LINKS */}
                   <div className="space-y-0.5 pt-1 border-t border-white/10">
                     {onSelectTab && (
@@ -430,20 +475,22 @@ export const Header: React.FC<HeaderProps> = ({
                           <span className="text-[10px] text-slate-500 font-mono">XLSX</span>
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsDropdownOpen(false);
-                            onSelectTab('settings');
-                          }}
-                          className="w-full flex items-center justify-between p-2 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Settings className="w-3.5 h-3.5 text-slate-400" />
-                            <span>إعدادات النظام والمهل الرسمية</span>
-                          </span>
-                          <span className="text-[10px] text-slate-500">30 يوم</span>
-                        </button>
+                        {activeRole === 'admin' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsDropdownOpen(false);
+                              onSelectTab('settings');
+                            }}
+                            className="w-full flex items-center justify-between p-2 rounded-lg text-xs text-slate-300 hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2">
+                              <Settings className="w-3.5 h-3.5 text-slate-400" />
+                              <span>إعدادات النظام والمهل الرسمية</span>
+                            </span>
+                            <span className="text-[10px] text-slate-500">30 يوم</span>
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -472,16 +519,24 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Supabase Cloud Database Button */}
-          {onOpenSupabase && (
+          {/* Supabase Cloud Database Button - Exclusive to Master Admin (Walid Adel) */}
+          {activeRole === 'admin' && currentUser?.role === 'admin' && (currentUser?.username?.toLowerCase() === 'admin' || currentUser?.id === 'usr-1') && onOpenSupabase && (
             <button
               onClick={onOpenSupabase}
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all cursor-pointer shadow-sm group"
-              title="إعداد والربط بقاعدة بيانات Supabase"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-sm group ${
+                cloudStatus === 'syncing'
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                  : cloudStatus === 'error'
+                  ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                  : 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300'
+              }`}
+              title="خاص بالمدير العام فقط: حالة وإعدادات الربط السحابي مع Supabase"
             >
               <Database className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
-              <span>Supabase</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>{cloudStatus === 'syncing' ? 'جارٍ الحفظ بـ Supabase...' : 'Supabase متصل'}</span>
+              <span className={`w-2 h-2 rounded-full ${
+                cloudStatus === 'syncing' ? 'bg-amber-400 animate-ping' : cloudStatus === 'error' ? 'bg-rose-500' : 'bg-emerald-400 animate-pulse'
+              }`} />
             </button>
           )}
 

@@ -26,11 +26,14 @@ interface ModernFilterBarProps {
   models?: string[];
   totalResults: number;
   totalFleet: number;
-  onAddLicense: () => void;
-  onEditData: () => void;
+  onAddLicense?: () => void;
+  onEditData?: () => void;
   onTransferVehicle?: () => void;
+  canAddVehicle?: boolean;
+  canEditLicense?: boolean;
   canTransferVehicle?: boolean;
-  onExportData: () => void;
+  canExportData?: boolean;
+  onExportData?: () => void;
 }
 
 export const ModernFilterBar: React.FC<ModernFilterBarProps> = ({
@@ -49,7 +52,10 @@ export const ModernFilterBar: React.FC<ModernFilterBarProps> = ({
   onAddLicense,
   onEditData,
   onTransferVehicle,
+  canAddVehicle = true,
+  canEditLicense = true,
   canTransferVehicle = true,
+  canExportData = true,
   onExportData,
 }) => {
   const isFiltered = 
@@ -105,17 +111,25 @@ export const ModernFilterBar: React.FC<ModernFilterBarProps> = ({
 
         {/* Quick Action Pills */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
-          {/* Add License Button */}
-          <button
-            type="button"
-            onClick={onAddLicense}
-            className="flex items-center gap-1.5 px-3.5 h-10 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white text-xs font-bold shadow-md shadow-emerald-950/40 border border-emerald-400/40 transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap"
-          >
-            <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
-              <Plus className="w-3.5 h-3.5 text-white stroke-[3]" />
+          {!canAddVehicle && !canEditLicense && !canTransferVehicle && (
+            <div className="flex items-center gap-1.5 px-3 h-10 rounded-xl bg-slate-800/80 border border-slate-600/40 text-slate-300 text-xs font-bold whitespace-nowrap">
+              <span>👁️ وضع المشاهدة والتدقيق (للقراءة فقط)</span>
             </div>
-            <span>إضافة رخصة سيارة</span>
-          </button>
+          )}
+
+          {/* Add License Button */}
+          {canAddVehicle && onAddLicense && (
+            <button
+              type="button"
+              onClick={onAddLicense}
+              className="flex items-center gap-1.5 px-3.5 h-10 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white text-xs font-bold shadow-md shadow-emerald-950/40 border border-emerald-400/40 transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap"
+            >
+              <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center">
+                <Plus className="w-3.5 h-3.5 text-white stroke-[3]" />
+              </div>
+              <span>إضافة رخصة سيارة</span>
+            </button>
+          )}
 
           {/* Transfer Vehicle Button */}
           {canTransferVehicle && onTransferVehicle && (
@@ -130,24 +144,28 @@ export const ModernFilterBar: React.FC<ModernFilterBarProps> = ({
           )}
 
           {/* Edit Data Button */}
-          <button
-            type="button"
-            onClick={onEditData}
-            className="flex items-center gap-1.5 px-3 h-10 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 text-xs font-bold border border-white/10 transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap"
-          >
-            <FileEdit className="w-4 h-4 text-slate-300 stroke-[2]" />
-            <span>إدارة وتعديل رخصة</span>
-          </button>
+          {canEditLicense && onEditData && (
+            <button
+              type="button"
+              onClick={onEditData}
+              className="flex items-center gap-1.5 px-3 h-10 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 text-xs font-bold border border-white/10 transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap"
+            >
+              <FileEdit className="w-4 h-4 text-slate-300 stroke-[2]" />
+              <span>إدارة وتعديل رخصة</span>
+            </button>
+          )}
 
           {/* Export Data Button */}
-          <button
-            type="button"
-            onClick={onExportData}
-            className="flex items-center gap-1.5 px-3 h-10 rounded-xl bg-gradient-to-r from-emerald-950/40 to-slate-900 hover:from-emerald-950/70 hover:to-slate-800 text-emerald-300 hover:text-white text-xs font-bold border border-emerald-500/40 transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap shadow-sm"
-          >
-            <Download className="w-4 h-4 text-emerald-400 stroke-[2.2]" />
-            <span>تصدير إكسل رسمي ملون</span>
-          </button>
+          {canExportData && onExportData && (
+            <button
+              type="button"
+              onClick={onExportData}
+              className="flex items-center gap-1.5 px-3 h-10 rounded-xl bg-gradient-to-r from-emerald-950/40 to-slate-900 hover:from-emerald-950/70 hover:to-slate-800 text-emerald-300 hover:text-white text-xs font-bold border border-emerald-500/40 transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap shadow-sm"
+            >
+              <Download className="w-4 h-4 text-emerald-400 stroke-[2.2]" />
+              <span>تصدير إكسل رسمي ملون</span>
+            </button>
+          )}
         </div>
       </div>
 

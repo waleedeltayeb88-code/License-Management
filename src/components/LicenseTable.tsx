@@ -608,11 +608,22 @@ export const LicenseTable: React.FC<LicenseTableProps> = ({
                         <button
                           type="button"
                           onClick={() => onSelectVehicle(v)}
-                          title="تعديل رخص وبيانات السيارة"
-                          className="p-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                          title="عرض بطاقة وتفاصيل السيارة"
+                          className="p-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
                         >
-                          <Edit className="w-3.5 h-3.5" />
+                          <Eye className="w-3.5 h-3.5" />
                         </button>
+
+                        {onManageVehicle && (
+                          <button
+                            type="button"
+                            onClick={() => onManageVehicle(v)}
+                            title="تعديل رخص وبيانات السيارة"
+                            className="p-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 transition-all cursor-pointer shadow-sm hover:scale-105 active:scale-95"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                        )}
 
                         {onTransferVehicle && (
                           <button

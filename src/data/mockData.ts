@@ -1,5 +1,6 @@
 import { Vehicle, TransferRecord, AuditRecord, SystemNotification, AppSettings, SystemUser } from '../types';
 import { USER_PROVIDED_LICENSES } from './userLicenseData';
+import { ROLE_DEFAULT_PERMISSIONS } from '../utils/permissionUtils';
 
 export const INITIAL_USERS: SystemUser[] = [
   {
@@ -9,10 +10,55 @@ export const INITIAL_USERS: SystemUser[] = [
     email: 'Walid.Adel@Seoudisupermarket.com',
     password: 'admin',
     role: 'admin',
+    title: 'مدير عام المنظومة (Master Admin)',
     status: 'active',
     createdAt: '2025-01-01',
     lastLogin: '2025-06-04 10:15',
-    phone: '01144542800'
+    phone: '01144542800',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.admin }
+  },
+  {
+    id: 'user-fleet-1',
+    username: 'fleet',
+    name: 'أحمد عثمان (مدير الأسطول)',
+    email: 'fleet@seoudisupermarket.com',
+    password: '123456',
+    role: 'fleet_manager',
+    title: 'مدير الحركة والأسطول المركزي',
+    status: 'active',
+    createdAt: '2025-01-15',
+    lastLogin: '2025-06-04 09:30',
+    phone: '01000000001',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.fleet_manager }
+  },
+  {
+    id: 'user-branch-1',
+    username: 'branch',
+    name: 'محمود الصاوي (مدير فرع زايد)',
+    email: 'zayed.branch@seoudisupermarket.com',
+    password: '123456',
+    role: 'branch_manager',
+    title: 'مسؤول تشغيل فرع الشيخ زايد',
+    assignedBranch: 'دارك ستور الشيخ زايد (DS Zayed)',
+    status: 'active',
+    createdAt: '2025-02-01',
+    lastLogin: '2025-06-03 14:20',
+    phone: '01000000002',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.branch_manager }
+  },
+  {
+    id: 'user-viewer-1',
+    username: 'viewer',
+    name: 'مدقق ومشاهد التراخيص (View Only)',
+    email: 'viewer@seoudisupermarket.com',
+    password: '123456',
+    role: 'viewer',
+    title: 'مراقب ومدقق تراخيص (قراءة فقط)',
+    status: 'active',
+    createdAt: '2025-02-10',
+    lastLogin: '2025-06-04 08:45',
+    phone: '01000000003',
+    permissions: { ...ROLE_DEFAULT_PERMISSIONS.viewer }
   }
 ];
 

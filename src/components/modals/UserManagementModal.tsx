@@ -37,7 +37,8 @@ import {
   ROLE_DEFAULT_PERMISSIONS, 
   PERMISSION_DEFINITIONS, 
   ROLE_DEFINITIONS,
-  RoleMeta 
+  RoleMeta,
+  sanitizeUserPermissions
 } from '../../utils/permissionUtils';
 
 interface UserManagementModalProps {
@@ -210,13 +211,9 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setFormPhone(user.phone || '');
     setFormStatus(user.status);
 
-    if (user.permissions) {
-      setEnableCustomPermissions(true);
-      setCustomPermissions({ ...ROLE_DEFAULT_PERMISSIONS[user.role], ...user.permissions });
-    } else {
-      setEnableCustomPermissions(false);
-      setCustomPermissions(ROLE_DEFAULT_PERMISSIONS[user.role]);
-    }
+    const sanitized = sanitizeUserPermissions(user.role, user.permissions);
+    setEnableCustomPermissions(false);
+    setCustomPermissions(sanitized);
 
     setOpenActionUserId(null);
     setActiveTab('form');
@@ -225,9 +222,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const handleRoleChangeInForm = (newRole: UserRole) => {
     setFormRole(newRole);
     setIsFormRoleDropdownOpen(false);
-    if (!enableCustomPermissions) {
-      setCustomPermissions(ROLE_DEFAULT_PERMISSIONS[newRole]);
-    }
+    // Always update permissions to match the newly selected role
+    setCustomPermissions({ ...ROLE_DEFAULT_PERMISSIONS[newRole] });
     if (newRole !== 'branch_manager') {
       setFormBranch('');
     }
@@ -252,7 +248,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       }
     }
 
-    const assignedPermissions = enableCustomPermissions ? customPermissions : ROLE_DEFAULT_PERMISSIONS[formRole];
+    const rawPermissions = enableCustomPermissions ? customPermissions : ROLE_DEFAULT_PERMISSIONS[formRole];
+    const assignedPermissions = sanitizeUserPermissions(formRole, rawPermissions);
 
     if (editingUserId) {
       // Update existing
